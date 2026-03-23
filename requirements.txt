@@ -1,0 +1,17 @@
+mlx-whisper
+fastapi
+uvicorn[standard]
+websockets
+sounddevice
+numpy
+scipy
+pyperclip
+pyobjc-framework-ScreenCaptureKit
+onnxruntime
+pywebview
+pynput
+pytest
+pytest-asyncio
+pytest-cov
+httpx
+mlx-lm

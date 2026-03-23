@@ -1,0 +1,906 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DashScribe</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300..700;1,9..40,300..700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div id="app">
+
+        <!-- Onboarding overlay -->
+        <div id="onboarding-overlay" class="onboarding-overlay hidden">
+            <div class="onboarding-card">
+                <h1 class="onboarding-title">Welcome to DashScribe</h1>
+                <p class="onboarding-subtitle">A few things to set up before you start dictating.</p>
+
+                <div class="onboarding-section-label">Permissions</div>
+                <div id="onboarding-permissions" class="onboarding-items"></div>
+
+                <div id="onboarding-models-label" class="onboarding-section-label">Models</div>
+                <div id="onboarding-models" class="onboarding-items"></div>
+
+                <button id="onboarding-continue-btn" class="onboarding-continue-btn" disabled>Continue</button>
+                <button id="onboarding-skip-btn" class="onboarding-skip-btn">Skip for now</button>
+            </div>
+        </div>
+
+        <!-- Main layout: sidebar + content -->
+        <div class="app-layout">
+            <!-- Sidebar -->
+            <aside class="sidebar">
+                <div class="sidebar-brand">
+                    <svg class="sidebar-brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+                        <path d="M19 10v1a7 7 0 0 1-14 0v-1"/>
+                        <line x1="12" y1="19" x2="12" y2="22"/>
+                    </svg>
+                    <span class="sidebar-brand-name">DashScribe</span>
+                </div>
+
+                <nav class="sidebar-nav">
+                    <button class="sidebar-item active" data-mode="dictate">
+                        <svg class="sidebar-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M3 12a9 9 0 1 0 18 0 9 9 0 0 0-18 0"/>
+                            <path d="M12 8v8"/>
+                            <path d="M8 12h8"/>
+                        </svg>
+                        <span>Home</span>
+                    </button>
+                    <button class="sidebar-item" data-mode="file">
+                        <svg class="sidebar-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path>
+                            <path d="M14 3v5h5"></path>
+                            <path d="M8.5 13h7"></path>
+                            <path d="M8.5 17h7"></path>
+                        </svg>
+                        <span>File</span>
+                    </button>
+                    <button class="sidebar-item" data-mode="dictionary">
+                        <svg class="sidebar-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+                            <path d="M8 7h8"></path>
+                            <path d="M8 11h6"></path>
+                        </svg>
+                        <span>Dictionary</span>
+                    </button>
+                    <button class="sidebar-item" data-mode="snippets">
+                        <svg class="sidebar-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="16 18 22 12 16 6"></polyline>
+                            <polyline points="8 6 2 12 8 18"></polyline>
+                            <line x1="14" y1="4" x2="10" y2="20"></line>
+                        </svg>
+                        <span>Snippets</span>
+                    </button>
+                    <button class="sidebar-item" data-mode="classnote" title="ClassNote">
+                        <svg class="sidebar-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+                            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+                            <circle cx="12" cy="10" r="3" fill="currentColor" opacity="0.5"/>
+                        </svg>
+                        <span>ClassNote</span>
+                        <span class="classnote-recording-dot" style="display:none;"></span>
+                    </button>
+                    <button class="sidebar-item" data-mode="meeting" title="Meeting">
+                        <svg class="sidebar-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M15.05 5A5 5 0 0 1 19 8.95M15.05 1A9 9 0 0 1 23 8.94"/>
+                            <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.362 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.338 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/>
+                        </svg>
+                        <span>Meeting</span>
+                        <span class="meeting-recording-dot" style="display:none;"></span>
+                    </button>
+                </nav>
+
+                <footer class="sidebar-footer">
+                    <button class="sidebar-item" data-mode="settings">
+                        <svg class="sidebar-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="3.2"></circle>
+                            <path d="M19.4 15a1.5 1.5 0 0 0 .3 1.7l.1.1a2 2 0 0 1 0 2.8 2 2 0 0 1-2.8 0l-.1-.1a1.5 1.5 0 0 0-1.7-.3 1.5 1.5 0 0 0-.9 1.4V21a2 2 0 0 1-4 0v-.1a1.5 1.5 0 0 0-.9-1.4 1.5 1.5 0 0 0-1.7.3l-.1.1a2 2 0 0 1-2.8 0 2 2 0 0 1 0-2.8l.1-.1a1.5 1.5 0 0 0 .3-1.7 1.5 1.5 0 0 0-1.4-.9H3a2 2 0 0 1 0-4h.1a1.5 1.5 0 0 0 1.4-.9 1.5 1.5 0 0 0-.3-1.7l-.1-.1a2 2 0 0 1 0-2.8 2 2 0 0 1 2.8 0l.1.1a1.5 1.5 0 0 0 1.7.3h0a1.5 1.5 0 0 0 .9-1.4V3a2 2 0 0 1 4 0v.1a1.5 1.5 0 0 0 .9 1.4h0a1.5 1.5 0 0 0 1.7-.3l.1-.1a2 2 0 0 1 2.8 0 2 2 0 0 1 0 2.8l-.1.1a1.5 1.5 0 0 0-.3 1.7v0a1.5 1.5 0 0 0 1.4.9H21a2 2 0 0 1 0 4h-.1a1.5 1.5 0 0 0-1.4.9z"></path>
+                        </svg>
+                        <span>Settings</span>
+                    </button>
+                    <span id="model-status" class="model-status">
+                        <span class="dot loading"></span> Loading model...
+                    </span>
+                    <span id="latency" class="latency"></span>
+                </footer>
+            </aside>
+
+            <!-- Content area -->
+            <main class="content">
+                <!-- Home / Dictate page: single column -->
+                <div id="dictate-mode" class="page active">
+                    <div class="dictate-layout">
+                        <div class="welcome-header">
+                            <h1 class="welcome-text" id="welcome-text">Welcome back</h1>
+                            <div id="stats-section" class="welcome-stats">
+                                <div class="stat-chip">
+                                    <svg class="stat-chip-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c1.4 2.1 2 3.4 2 5a2.5 2.5 0 1 1-5 0c0-1.6.7-3.1 3-5Z"/><path d="M6.5 14a5.5 5.5 0 0 0 11 0c0-2.6-1.7-4.8-4-5.6"/></svg>
+                                    <span id="stat-streak" class="stat-chip-value">0D</span>
+                                </div>
+                                <div class="stat-chip">
+                                    <svg class="stat-chip-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.5A2.5 2.5 0 0 1 6.5 4H20v15H6.5A2.5 2.5 0 0 1 4 16.5v-10Z"/><path d="M8 8h8M8 12h8M8 16h6"/></svg>
+                                    <span id="stat-words" class="stat-chip-value">0</span>
+                                </div>
+                                <div class="stat-chip">
+                                    <svg class="stat-chip-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 18V12"/><path d="M12 18V8"/><path d="M18 18V14"/><path d="M5 18h14"/></svg>
+                                    <span id="stat-wpm" class="stat-chip-value">0.0</span>
+                                    <span class="stat-chip-unit">wpm</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Hero banner with mic button -->
+                        <div class="hero-banner">
+                            <div class="hero-banner-content">
+                                <h3>Dictate anything, anywhere</h3>
+                                <p>Hold your hotkey to record. DashScribe transcribes locally on your device — fast, private, offline.</p>
+                                <button id="mic-btn" class="hero-mic-btn" aria-label="Hold to record">
+                                    <svg class="mic-icon" viewBox="0 0 24 24" fill="currentColor">
+                                        <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
+                                        <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+                                    </svg>
+                                    <span id="mic-label" class="hero-mic-label">Hold to Record</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- History feed -->
+                        <div class="history-feed">
+                            <div class="history-header">
+                                <h2 class="history-heading">Recent</h2>
+                                <input id="history-search" type="text" class="history-search" placeholder="Search transcriptions...">
+                            </div>
+                            <div id="history-list" class="history-list"></div>
+                            <button id="load-more-btn" class="load-more-btn hidden">Load more</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- File page -->
+                <div id="file-mode" class="page">
+                    <div class="page-header">
+                        <h1 class="page-title">Transcribe File</h1>
+                    </div>
+                    <div class="page-content">
+                        <div class="page-hero page-hero-file">
+                            <div class="page-hero-content">
+                                <h3>Turn any audio into text</h3>
+                                <p>Drop a recording, podcast, or voice memo — DashScribe transcribes it locally in seconds. No upload, no cloud.</p>
+                                <div class="page-hero-pills">
+                                    <span class="hero-pill">Meetings</span>
+                                    <span class="hero-pill">Voice memos</span>
+                                    <span class="hero-pill">Podcasts</span>
+                                    <span class="hero-pill">Interviews</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="file-input-row">
+                            <input id="file-path" type="text" class="file-input" placeholder="Paste audio file path...">
+                            <button id="browse-btn" class="btn-secondary">Browse</button>
+                        </div>
+                        <button id="transcribe-btn" class="btn-primary" disabled>Transcribe</button>
+                        <div id="file-progress" class="file-progress hidden">
+                            <div class="progress-bar-inline">
+                                <div class="progress-fill-inline loading"></div>
+                            </div>
+                            <p id="file-progress-msg" class="file-progress-msg loading">Transcribing file...</p>
+                        </div>
+                        <div id="file-result" class="file-result hidden">
+                            <p id="file-result-text" class="file-result-text"></p>
+                            <p id="file-output-path" class="file-output-path"></p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Dictionary page -->
+                <div id="dictionary-mode" class="page">
+                    <div class="page-header">
+                        <h1 class="page-title">Dictionary</h1>
+                        <div class="page-header-actions">
+                            <button id="dictionary-add-btn" class="btn-action">Add new</button>
+                        </div>
+                    </div>
+                    <div class="page-content">
+                        <div class="page-hero page-hero-dictionary">
+                            <div class="page-hero-content">
+                                <h3>DashScribe speaks the way you speak</h3>
+                                <p>Add personal terms, company jargon, client names, or industry-specific lingo so every word is recognized correctly.</p>
+                                <div class="page-hero-pills">
+                                    <span class="hero-pill">Names</span>
+                                    <span class="hero-pill">Acronyms</span>
+                                    <span class="hero-pill">Brand names</span>
+                                    <span class="hero-pill">Technical terms</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="dictionary-input-row" class="dictionary-input-row hidden">
+                            <input id="dictionary-input" type="text" class="file-input" placeholder="Type a term and press Enter...">
+                        </div>
+                        <div id="dictionary-tags" class="dictionary-tags"></div>
+                    </div>
+                </div>
+
+                <!-- Snippets page -->
+                <div id="snippets-mode" class="page">
+                    <div class="page-header">
+                        <h1 class="page-title">Snippets</h1>
+                        <div class="page-header-actions">
+                            <button id="add-snippet-btn" class="btn-action">Add new</button>
+                        </div>
+                    </div>
+                    <div class="page-content">
+                        <div class="page-hero page-hero-snippets">
+                            <div class="page-hero-content">
+                                <h3>The stuff you shouldn't have to re-type</h3>
+                                <p>Save shortcuts for things you type all the time — emails, links, addresses, boilerplate. Just dictate the trigger and it expands.</p>
+                                <div class="page-hero-pills">
+                                    <span class="hero-pill">"my email" → you@example.com</span>
+                                    <span class="hero-pill">"my address" → 123 Main St</span>
+                                    <span class="hero-pill">"sign off" → Best regards, ...</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="snippet-list" class="snippet-list"></div>
+                    </div>
+                </div>
+
+                <!-- ClassNote page -->
+                <div id="classnote-mode" class="page">
+                    <!-- Lecture List View -->
+                    <div id="classnote-list" class="classnote-view">
+                        <div class="page-header">
+                            <h1 class="page-title">ClassNote</h1>
+                            <div class="page-header-actions">
+                                <button id="classnote-start-btn" class="btn-action">Start Lecture</button>
+                                <div class="review-menu-wrap">
+                                    <button id="cn-global-menu-btn" class="btn-icon" title="Settings">
+                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+                                    </button>
+                                    <div id="cn-global-menu" class="review-menu" style="display:none;">
+                                        <button id="cn-manage-labels-btn" class="review-menu-item">Manage Labels</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Global Label Manager Modal -->
+                        <div id="cn-label-manager" class="label-modal-overlay" style="display:none;">
+                            <div class="label-modal">
+                                <div class="label-modal-header">
+                                    <h3>Manage Labels</h3>
+                                    <button id="cn-label-manager-close" class="btn-icon" title="Close">
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>
+                                    </button>
+                                </div>
+                                <div id="cn-label-manager-list" class="label-modal-section"></div>
+                                <div class="label-modal-new">
+                                    <div class="label-input-row">
+                                        <input type="text" id="cn-label-manager-input" placeholder="Create new label..." class="label-new-input">
+                                        <button id="cn-label-manager-submit" class="label-submit-btn" title="Create label">
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="page-content">
+                            <div class="page-hero page-hero-classnote">
+                                <div class="page-hero-content">
+                                    <h3>Your lectures, captured and searchable</h3>
+                                    <p>Hit record and focus on learning — ClassNote transcribes your lectures in real-time, right on your laptop. No internet, no uploads, completely private.</p>
+                                    <div class="page-hero-pills">
+                                        <span class="hero-pill">Live transcription</span>
+                                        <span class="hero-pill">Offline & private</span>
+                                        <span class="hero-pill">Auto-correcting</span>
+                                        <span class="hero-pill">Searchable notes</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div id="classnote-filters" class="classnote-filters">
+                                <div class="classnote-filters-row">
+                                    <input type="text" id="classnote-search" placeholder="Search lectures..." class="history-search">
+                                    <select id="classnote-sort" class="classnote-sort">
+                                        <option value="date">Date</option>
+                                        <option value="title">Title</option>
+                                        <option value="duration">Duration</option>
+                                    </select>
+                                </div>
+                                <div id="classnote-label-filter" class="label-chips"></div>
+                            </div>
+                            <div id="classnote-lectures" class="lecture-list">
+                                <!-- Populated by JS -->
+                            </div>
+                            <div id="classnote-empty" class="empty-state" style="display:none;">
+                                <p>No lectures yet.</p>
+                                <button class="btn-action" onclick="document.getElementById('classnote-start-btn').click()">
+                                    Start your first lecture
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Recording View -->
+                    <div id="classnote-recording" class="classnote-view" style="display:none;">
+                        <div class="classnote-top-bar">
+                            <input type="text" id="classnote-title" class="classnote-title-input" placeholder="Lecture title...">
+                            <span class="recording-indicator"><span class="recording-dot"></span></span>
+                            <span id="classnote-elapsed">00:00</span>
+                            <div class="classnote-controls">
+                                <button id="classnote-pause-btn" class="btn-secondary" title="Pause">Pause</button>
+                                <button id="classnote-stop-btn" class="btn-action" title="Stop">Stop</button>
+                                <button id="classnote-discard-btn" class="btn-danger" title="Discard">Discard</button>
+                            </div>
+                        </div>
+                        <div id="classnote-warning-banner" class="warning-banner" style="display:none;"></div>
+                        <div id="classnote-transcript" class="classnote-transcript">
+                            <!-- Segments appended by JS -->
+                        </div>
+                        <button id="classnote-jump-btn" class="jump-to-latest" style="display:none;">Jump to latest</button>
+                    </div>
+
+                    <!-- Review View -->
+                    <div id="classnote-review" class="classnote-view" style="display:none;">
+                        <div class="review-header">
+                            <div class="review-header-row">
+                                <button id="review-back-btn" class="btn-icon" title="Back to lectures">
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>
+                                </button>
+                                <input type="text" id="review-title" class="classnote-title-input">
+                                <span id="review-meta" class="review-meta"></span>
+                                <button id="review-edit-btn" class="btn-icon" title="Edit transcript">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                                </button>
+                                <div class="review-menu-wrap">
+                                    <button id="review-menu-btn" class="btn-icon" title="More options">
+                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+                                    </button>
+                                    <div id="review-menu-dropdown" class="review-menu" style="display:none;">
+                                        <button id="menu-add-labels" class="review-menu-item">Add Labels</button>
+                                        <button id="menu-retranscribe" class="review-menu-item">Re-transcribe</button>
+                                        <button id="menu-delete-lecture" class="review-menu-item danger">Delete Lecture</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div id="review-labels" class="review-labels-row"></div>
+                        </div>
+                        <div id="review-transcript" class="classnote-transcript review-mode">
+                            <!-- Populated by JS -->
+                        </div>
+
+                        <!-- Label Modal -->
+                        <div id="label-modal" class="label-modal-overlay" style="display:none;">
+                            <div class="label-modal">
+                                <div class="label-modal-header">
+                                    <h3>Manage Labels</h3>
+                                    <button id="label-modal-close" class="btn-icon" title="Close">
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>
+                                    </button>
+                                </div>
+                                <div id="label-modal-current" class="label-modal-section"></div>
+                                <div class="label-modal-divider"></div>
+                                <div id="label-modal-available" class="label-modal-section"></div>
+                                <div class="label-modal-new">
+                                    <div class="label-input-row">
+                                        <input type="text" id="label-modal-input" placeholder="Create new label..." class="label-new-input">
+                                        <button id="label-modal-submit" class="label-submit-btn" title="Press Enter or click to create">
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="review-player-bar" class="custom-player" style="display:none;">
+                            <button id="player-play-btn" class="player-btn" title="Play/Pause">
+                                <svg id="player-play-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
+                                <svg id="player-pause-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" style="display:none;"><rect x="5" y="3" width="4" height="18"/><rect x="15" y="3" width="4" height="18"/></svg>
+                            </button>
+                            <span id="player-current">0:00</span>
+                            <input type="range" id="player-scrub" min="0" max="1000" value="0" step="1">
+                            <span id="player-duration">0:00</span>
+                        </div>
+                        <audio id="review-player" style="display:none;"></audio>
+                    </div>
+
+                    <!-- Countdown Overlay -->
+                    <div id="classnote-countdown" class="countdown-overlay" style="display:none;">
+                        <span id="countdown-number" class="countdown-number">3</span>
+                        <button id="countdown-cancel" class="btn-secondary">Cancel</button>
+                    </div>
+                </div>
+
+                <!-- Meeting page -->
+                <div id="meeting-mode" class="page">
+                    <!-- Meeting List View -->
+                    <div id="meeting-list" class="meeting-view">
+                        <div class="page-header">
+                            <h1 class="page-title">Meeting</h1>
+                            <div class="page-header-actions">
+                                <button id="meeting-start-btn" class="btn-action">Start Meeting</button>
+                                <div class="review-menu-wrap">
+                                    <button id="mt-global-menu-btn" class="btn-icon" title="Settings">
+                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+                                    </button>
+                                    <div id="mt-global-menu" class="review-menu" style="display:none;">
+                                        <button id="mt-manage-labels-btn" class="review-menu-item">Manage Labels</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Label Manager Modal -->
+                        <div id="mt-label-manager" class="label-modal-overlay" style="display:none;">
+                            <div class="label-modal">
+                                <div class="label-modal-header">
+                                    <h3>Manage Labels</h3>
+                                    <button id="mt-label-manager-close" class="btn-icon" title="Close">
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>
+                                    </button>
+                                </div>
+                                <div id="mt-label-manager-list" class="label-modal-section"></div>
+                                <div class="label-modal-new">
+                                    <div class="label-input-row">
+                                        <input type="text" id="mt-label-manager-input" placeholder="Create new label..." class="label-new-input">
+                                        <button id="mt-label-manager-submit" class="label-submit-btn" title="Create label">
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="page-content">
+                            <div class="page-hero page-hero-meeting">
+                                <div class="page-hero-content">
+                                    <h3>Transcribe your meetings in real-time</h3>
+                                    <p>Capture audio from Zoom, Teams, or any app on your Mac. Speaker-labeled transcription that runs entirely on your device.</p>
+                                    <div class="page-hero-pills">
+                                        <span class="hero-pill">Live transcription</span>
+                                        <span class="hero-pill">Per-app capture</span>
+                                        <span class="hero-pill">Speaker labels</span>
+                                        <span class="hero-pill">Offline & private</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div id="meeting-filters" class="classnote-filters">
+                                <div class="classnote-filters-row">
+                                    <input type="text" id="meeting-search" placeholder="Search meetings..." class="history-search">
+                                    <select id="meeting-sort" class="classnote-sort">
+                                        <option value="date">Date</option>
+                                        <option value="title">Title</option>
+                                    </select>
+                                </div>
+                                <div id="meeting-label-filter" class="label-chips"></div>
+                            </div>
+                            <div id="meeting-meetings" class="lecture-list">
+                                <!-- Populated by JS -->
+                            </div>
+                            <div id="meeting-empty" class="empty-state" style="display:none;">
+                                <p>No meetings yet.</p>
+                                <button class="btn-action" onclick="document.getElementById('meeting-start-btn').click()">
+                                    Start your first meeting
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Recording View -->
+                    <div id="meeting-recording" class="meeting-view meeting-view-flex" style="display:none;">
+                        <div class="classnote-top-bar">
+                            <input type="text" id="meeting-title" class="classnote-title-input" placeholder="Meeting title...">
+                            <span class="recording-indicator"><span class="recording-dot"></span></span>
+                            <span id="meeting-elapsed">00:00</span>
+                            <div class="classnote-controls">
+                                <button id="meeting-pause-btn" class="btn-secondary" title="Pause">Pause</button>
+                                <button id="meeting-stop-btn" class="btn-action" title="Stop">Stop</button>
+                                <button id="meeting-discard-btn" class="btn-danger" title="Discard">Discard</button>
+                            </div>
+                        </div>
+                        <div id="meeting-warning-banner" class="classnote-warning-banner" style="display:none;"></div>
+                        <div id="meeting-transcript" class="classnote-transcript meeting-transcript">
+                            <!-- Segments appended by JS -->
+                        </div>
+                    </div>
+
+                    <!-- Setup View (app picker + mode) -->
+                    <div id="meeting-setup" class="meeting-view" style="display:none;">
+                        <div class="meeting-setup-card">
+                            <h2>New Meeting</h2>
+                            <div id="meeting-setup-error" class="meeting-setup-error" style="display:none;"></div>
+                            <div class="meeting-setup-field">
+                                <label>App to capture</label>
+                                <div class="app-picker-row">
+                                    <div class="app-dropdown" id="app-dropdown">
+                                        <button class="app-dropdown-trigger" id="app-dropdown-trigger" type="button">
+                                            <span class="app-dropdown-label" id="app-dropdown-label">Loading apps...</span>
+                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+                                        </button>
+                                        <!-- Menu moved to body for z-index escape -->
+                                    </div>
+                                    <button class="app-refresh-btn" id="app-refresh-btn" type="button" title="Refresh app list">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
+                                    </button>
+                                </div>
+                                <input type="hidden" id="meeting-app-picker" value="">
+                                <p class="meeting-setup-hint" id="meeting-app-hint" style="display:none;">Start a meeting app (Zoom, Teams, etc.) first, then come back here.</p>
+                            </div>
+                            <div class="meeting-setup-field">
+                                <label>Mode</label>
+                                <div class="mode-toggle">
+                                    <button class="mode-toggle-btn active" data-mode="listen">Listen Only</button>
+                                    <button class="mode-toggle-btn" data-mode="full">Full (You + Others)</button>
+                                </div>
+                                <p class="mode-desc" id="mode-desc">Captures meeting audio only. All segments labeled "Others".</p>
+                            </div>
+                            <div class="meeting-setup-field">
+                                <label>Title</label>
+                                <input type="text" id="meeting-setup-title" class="classnote-title-input" placeholder="Meeting title...">
+                            </div>
+                            <div class="meeting-setup-actions">
+                                <button id="meeting-setup-cancel" class="btn-secondary">Cancel</button>
+                                <button id="meeting-setup-go" class="btn-action">Start Recording</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Review View -->
+                    <div id="meeting-review" class="meeting-view meeting-view-flex" style="display:none;">
+                        <div class="review-header">
+                            <div class="review-header-row">
+                                <button id="mt-review-back-btn" class="btn-icon" title="Back to meetings">
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>
+                                </button>
+                                <input type="text" id="mt-review-title" class="classnote-title-input" readonly>
+                                <span id="mt-review-meta" class="review-meta"></span>
+                                <button id="mt-review-edit-btn" class="btn-icon" title="Edit transcript">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                                </button>
+                                <div class="review-menu-wrap">
+                                    <button id="mt-review-menu-btn" class="btn-icon" title="More options">
+                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+                                    </button>
+                                    <div id="mt-review-menu" class="review-menu" style="display:none;">
+                                        <button id="mt-menu-export" class="review-menu-item">Export</button>
+                                        <button id="mt-menu-delete" class="review-menu-item danger">Delete Meeting</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div id="mt-review-labels" class="review-labels-row"></div>
+                        </div>
+                        <div id="mt-review-transcript" class="classnote-transcript review-mode meeting-transcript">
+                            <!-- Populated by JS -->
+                        </div>
+                        <div id="mt-player-bar" class="custom-player" style="display:none;">
+                            <button id="mt-player-play-btn" class="player-btn" title="Play/Pause">
+                                <svg id="mt-player-play-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
+                                <svg id="mt-player-pause-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" style="display:none;"><rect x="5" y="3" width="4" height="18"/><rect x="15" y="3" width="4" height="18"/></svg>
+                            </button>
+                            <span id="mt-player-current">0:00</span>
+                            <input type="range" id="mt-player-scrub" min="0" max="1000" value="0" step="1">
+                            <span id="mt-player-duration">0:00</span>
+                        </div>
+                        <audio id="mt-review-player" style="display:none;"></audio>
+                    </div>
+                </div>
+
+                <!-- Settings is a floating modal, not a page -->
+                <div id="settings-mode" class="page" style="display:none !important;"></div>
+            </main>
+        </div>
+
+        <!-- Settings floating modal -->
+        <div id="settings-overlay" class="settings-overlay hidden">
+            <div class="settings-modal">
+                <button id="settings-close-btn" class="settings-close-btn" title="Close">&times;</button>
+
+                <!-- Sidebar -->
+                <nav class="settings-sidebar">
+                    <div class="settings-sidebar-section">
+                        <div class="settings-sidebar-label">Settings</div>
+                        <button class="settings-sidebar-item active" data-settings-tab="general">
+                            <svg class="settings-sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+                            General
+                        </button>
+                        <button class="settings-sidebar-item" data-settings-tab="ai-features">
+                            <svg class="settings-sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2z"/></svg>
+                            AI Features
+                        </button>
+                        <button class="settings-sidebar-item" data-settings-tab="appearance">
+                            <svg class="settings-sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/></svg>
+                            Appearance
+                        </button>
+                    </div>
+                    <div class="settings-sidebar-section">
+                        <div class="settings-sidebar-label">Profile</div>
+                        <button class="settings-sidebar-item" data-settings-tab="profile">
+                            <svg class="settings-sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                            Profile & Backup
+                        </button>
+                    </div>
+                    <div class="settings-sidebar-footer">
+                        <span id="settings-version" class="settings-version">v1.0.0</span>
+                    </div>
+                </nav>
+
+                <!-- Content panels -->
+                <div class="settings-content">
+
+                    <!-- General -->
+                    <div id="settings-tab-general" class="settings-tab-panel">
+                        <h2 class="settings-content-title">General</h2>
+
+                        <div class="settings-row">
+                            <div class="settings-row-info">
+                                <div class="settings-row-title">Shortcuts</div>
+                                <div class="settings-row-desc">Global dictation trigger key</div>
+                            </div>
+                            <div class="settings-row-control">
+                                <div class="capture-row">
+                                    <button id="hotkey-capture-btn" class="capture-btn">
+                                        <span id="hotkey-display">Right Option</span>
+                                    </button>
+                                    <button id="hotkey-reset-btn" class="reset-btn" title="Reset to default">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="settings-row">
+                            <div class="settings-row-info">
+                                <div class="settings-row-title">Auto-insert after dictation</div>
+                                <div class="settings-row-desc">When off, text is stored internally</div>
+                            </div>
+                            <div class="settings-row-control">
+                                <input id="auto-insert-toggle" type="checkbox" class="toggle-switch">
+                            </div>
+                        </div>
+
+                        <div class="settings-row">
+                            <div class="settings-row-info">
+                                <div class="settings-row-title">Re-paste shortcut</div>
+                                <div class="settings-row-desc">Paste last dictation from internal clipboard</div>
+                            </div>
+                            <div class="settings-row-control">
+                                <div class="capture-row">
+                                    <button id="repaste-capture-btn" class="capture-btn">
+                                        <span id="repaste-display">Cmd+Option+V</span>
+                                    </button>
+                                    <button id="repaste-reset-btn" class="reset-btn" title="Reset repaste key">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="settings-row">
+                            <div class="settings-row-info">
+                                <div class="settings-row-title">Auto-update</div>
+                                <div class="settings-row-desc">Check for updates automatically</div>
+                            </div>
+                            <div class="settings-row-control">
+                                <input id="auto-update-toggle" type="checkbox" class="toggle-switch" checked>
+                            </div>
+                        </div>
+
+                        <div class="settings-row">
+                            <div class="settings-row-info">
+                                <div class="settings-row-title">Check for Updates</div>
+                                <div id="update-status-row" class="settings-row-desc">
+                                    <span id="update-status-text">Up to date</span>
+                                </div>
+                            </div>
+                            <div class="settings-row-control">
+                                <button id="check-update-btn" class="btn-secondary" style="padding:6px 14px;font-size:12px;">Check Now</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- AI Features -->
+                    <div id="settings-tab-ai-features" class="settings-tab-panel hidden">
+                        <h2 class="settings-content-title">AI Features</h2>
+
+                        <div class="settings-row">
+                            <div class="settings-row-info">
+                                <div class="settings-row-title">Enable AI Features</div>
+                                <div class="settings-row-desc">Download a local language model (~2.9 GB) to enable smart text formatting. Everything runs on-device.</div>
+                            </div>
+                            <div class="settings-row-control">
+                                <input id="ai-features-toggle" type="checkbox" class="toggle-switch">
+                            </div>
+                        </div>
+
+                        <div id="ai-features-sub" class="ai-features-sub">
+                            <div class="settings-row">
+                                <div class="settings-row-info">
+                                    <div class="settings-row-title">Smart Cleanup</div>
+                                    <div class="settings-row-desc">Removes filler words and self-corrections while preserving your natural voice.</div>
+                                </div>
+                                <div class="settings-row-control">
+                                    <input id="smart-cleanup-toggle" type="checkbox" class="toggle-switch" disabled>
+                                </div>
+                            </div>
+
+                            <div class="settings-row">
+                                <div class="settings-row-info">
+                                    <div class="settings-row-title">Context Formatting</div>
+                                    <div class="settings-row-desc">Adapts formatting style based on which app you're dictating into.</div>
+                                </div>
+                                <div class="settings-row-control">
+                                    <input id="context-formatting-toggle" type="checkbox" class="toggle-switch" disabled>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Appearance -->
+                    <div id="settings-tab-appearance" class="settings-tab-panel hidden">
+                        <h2 class="settings-content-title">Appearance</h2>
+
+                        <div class="settings-row">
+                            <div class="settings-row-info">
+                                <div class="settings-row-title">Theme</div>
+                                <div class="settings-row-desc">Choose light, dark, or follow your system theme.</div>
+                            </div>
+                            <div class="settings-row-control">
+                                <div class="theme-toggle" role="radiogroup" aria-label="Theme">
+                                    <button class="theme-option" data-theme-mode="auto" role="radio" aria-checked="true">
+                                        <svg class="theme-option-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+                                        Auto
+                                    </button>
+                                    <button class="theme-option" data-theme-mode="light" role="radio" aria-checked="false">
+                                        <svg class="theme-option-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/></svg>
+                                        Light
+                                    </button>
+                                    <button class="theme-option" data-theme-mode="dark" role="radio" aria-checked="false">
+                                        <svg class="theme-option-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+                                        Dark
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Profile & Backup -->
+                    <div id="settings-tab-profile" class="settings-tab-panel hidden">
+                        <h2 class="settings-content-title">Profile & Backup</h2>
+
+                        <!-- Display name -->
+                        <div class="settings-row">
+                            <div class="settings-row-info">
+                                <div class="settings-row-title">Display Name</div>
+                                <span id="profile-feedback" class="settings-row-desc" style="display:none;"></span>
+                            </div>
+                            <div class="settings-row-control" style="display:flex;gap:6px;">
+                                <input id="profile-display-name" type="text" placeholder="Your name" class="capture-btn" style="width:160px;text-align:left;">
+                                <button id="profile-save-btn" class="btn-secondary" style="padding:6px 14px;font-size:12px;">Save</button>
+                            </div>
+                        </div>
+
+                        <!-- Transfer settings -->
+                        <div class="settings-row">
+                            <div class="settings-row-info">
+                                <div class="settings-row-title">Export Settings</div>
+                                <div class="settings-row-desc">Save your settings, snippets, and dictionary to a file</div>
+                            </div>
+                            <div class="settings-row-control">
+                                <button id="settings-export-btn" class="btn-secondary" style="padding:6px 14px;font-size:12px;">Export</button>
+                            </div>
+                        </div>
+
+                        <div class="settings-row">
+                            <div class="settings-row-info">
+                                <div class="settings-row-title">Import Settings</div>
+                                <div class="settings-row-desc">Restore settings from a previously exported file</div>
+                            </div>
+                            <div class="settings-row-control">
+                                <button id="settings-import-btn" class="btn-secondary" style="padding:6px 14px;font-size:12px;">Import</button>
+                                <input id="settings-import-file" type="file" accept=".json" style="display:none;">
+                            </div>
+                        </div>
+
+                        <div class="settings-row" style="border-bottom:none;">
+                            <div class="settings-row-info">
+                                <div class="settings-row-title">Reset to Defaults</div>
+                                <div class="settings-row-desc">Clear all settings and start fresh</div>
+                            </div>
+                            <div class="settings-row-control">
+                                <button id="settings-reset-btn" class="btn-secondary" style="padding:6px 14px;font-size:12px;border-color:#dc3545;color:#dc3545;">Reset</button>
+                            </div>
+                        </div>
+
+                        <span id="transfer-feedback" style="font-size:11px;padding:0 16px;display:none;"></span>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+
+        <!-- Snippet picker overlay -->
+        <div id="snippet-overlay" class="snippet-overlay hidden">
+            <div class="snippet-overlay-card">
+                <input id="snippet-search" type="text" class="snippet-search" placeholder="Search snippets..." autofocus>
+                <div id="snippet-results" class="snippet-results"></div>
+                <p class="snippet-hint">Type to filter &middot; Enter to insert &middot; Esc to close</p>
+            </div>
+        </div>
+
+        <!-- RAM advisory banner -->
+        <div id="ram-banner" class="ram-banner hidden">
+            <div class="ram-banner-content">
+                <div class="ram-banner-header">
+                    <svg class="ram-banner-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                        <line x1="12" y1="9" x2="12" y2="13"/>
+                        <line x1="12" y1="17" x2="12.01" y2="17"/>
+                    </svg>
+                    <span class="ram-banner-title">Low memory detected (<span id="ram-amount"></span> GB)</span>
+                </div>
+                <p class="ram-banner-text">AI text formatting (Smart Cleanup, Context Formatting) uses an additional language model that may cause memory pressure on your system. You can disable these features in Settings &gt; AI Features for a smoother experience, or keep them on if things run fine.</p>
+                <div class="ram-banner-actions">
+                    <button id="ram-banner-dismiss" class="ram-banner-btn">Got it</button>
+                    <button id="ram-banner-hide" class="ram-banner-btn secondary">Don't show again</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Toast -->
+        <div id="toast" class="toast hidden">Copied to clipboard</div>
+
+        <!-- Update notification banner -->
+        <div id="update-banner" class="update-banner hidden">
+            <div class="update-banner-content">
+                <div class="update-banner-header">
+                    <svg class="update-banner-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="7 10 12 15 17 10"/>
+                        <line x1="12" y1="15" x2="12" y2="3"/>
+                    </svg>
+                    <span class="update-banner-title">Update available: <span id="update-version"></span></span>
+                </div>
+                <div id="update-notes" class="update-banner-notes"></div>
+                <div id="update-progress-row" class="update-progress-row hidden">
+                    <div class="update-progress-track">
+                        <div id="update-progress-fill" class="update-progress-fill"></div>
+                    </div>
+                    <span id="update-progress-text" class="update-progress-text">0%</span>
+                </div>
+                <div id="update-error" class="update-banner-error hidden"></div>
+                <div class="update-banner-actions">
+                    <button id="update-install-btn" class="update-action-btn primary">Download &amp; Install</button>
+                    <button id="update-dismiss-btn" class="update-action-btn secondary">Not Now</button>
+                    <button id="update-skip-btn" class="update-action-btn skip">Skip This Version</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Progress overlay -->
+        <div id="progress-container" class="progress-overlay">
+            <div class="progress-brand">
+                <svg class="progress-logo" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+                    <path d="M19 10v1a7 7 0 0 1-14 0v-1"/>
+                    <line x1="12" y1="19" x2="12" y2="22"/>
+                </svg>
+                <h1 class="progress-title">DashScribe</h1>
+            </div>
+            <div class="progress-bar">
+                <div id="progress-fill" class="progress-fill"></div>
+            </div>
+            <p id="progress-message" class="progress-msg">Initializing...</p>
+        </div>
+    </div>
+    <div class="app-dropdown-menu" id="app-dropdown-menu" style="display:none;">
+        <div class="app-dropdown-list" id="app-dropdown-list">
+            <!-- Populated by JS -->
+        </div>
+    </div>
+    <script src="/static/classnote.js"></script>
+    <script src="/static/meeting.js"></script>
+    <script src="/static/app.js"></script>
+</body>
+</html>

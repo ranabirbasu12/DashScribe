@@ -1,0 +1,241 @@
+/* static/bar.css */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+    background: transparent;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+    height: 100%;
+}
+
+.bar {
+    --capsule-bg: rgba(30, 30, 30, 0.9);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    width: 100%;
+    position: relative;
+    overflow: hidden;
+    border-radius: 999px;
+}
+
+/* Shared state container behavior */
+.bar-idle,
+.bar-recording,
+.bar-processing,
+.bar-error {
+    position: absolute;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+}
+
+/* Show active state */
+.bar.idle .bar-idle,
+.bar.recording .bar-recording,
+.bar.processing .bar-processing,
+.bar.error .bar-error {
+    display: flex;
+    pointer-events: auto;
+}
+
+/* Recording + processing share the same capsule tone */
+.bar-recording,
+.bar-processing {
+    background: var(--capsule-bg);
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    height: 100%;
+}
+
+/* Idle capsule */
+.bar-idle {
+    position: absolute;
+    inset: auto;
+    left: 50%;
+    top: 50%;
+    width: 28px;
+    height: 5px;
+    transform: translate(-50%, -50%);
+    background: var(--capsule-bg);
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    cursor: pointer;
+}
+
+.bar-idle::before {
+    content: "";
+    position: absolute;
+    inset: -9px -14px;
+}
+
+.bar-idle:hover {
+    transform: translate(-50%, -50%) scaleX(1.06);
+    background: rgba(38, 38, 38, 0.95);
+}
+
+/* Recording capsule */
+.bar-recording {
+    position: relative;
+    padding: 0 12px;
+    gap: 10px;
+}
+
+.bar-btn {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin: 3px 0;
+    transition: opacity 0.15s ease;
+}
+
+.bar-btn:hover { opacity: 0.86; }
+
+.cancel-btn {
+    background: rgba(255, 255, 255, 0.14);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: #f3f3f3;
+}
+
+.stop-btn {
+    background: #ff453a;
+}
+
+.stop-icon {
+    width: 8px;
+    height: 8px;
+    background: #ffffff;
+    border-radius: 2px;
+}
+
+#waveform {
+    flex: 1;
+    height: 24px;
+    margin: 3px 0;
+}
+
+/* Warning overlay */
+.bar-warning {
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    margin-bottom: 6px;
+    background: rgba(40, 30, 10, 0.95);
+    color: #ff9f0a;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    white-space: nowrap;
+    pointer-events: none;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    opacity: 1;
+    transition: opacity 0.4s ease;
+}
+
+.bar-warning.hidden {
+    opacity: 0;
+}
+
+/* Processing capsule */
+.bar-processing {
+    padding: 0 16px;
+}
+
+.processing-dots {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.processing-dots span {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.95);
+    animation: dot-bounce 1.2s ease-in-out infinite;
+}
+
+.processing-dots span:nth-child(2) { animation-delay: 0.15s; }
+.processing-dots span:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes dot-bounce {
+    0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
+    40% { opacity: 1; transform: scale(1.2); }
+}
+
+/* Error */
+.bar-error {
+    background: rgba(229, 57, 53, 0.92);
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    height: 100%;
+}
+
+.error-flash {
+    width: 100%;
+    height: 100%;
+    border-radius: 999px;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    position: absolute;
+    inset: 0;
+}
+
+.bar.error .error-flash {
+    opacity: 1;
+}
+
+.retry-btn {
+    position: relative;
+    z-index: 2;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(255, 255, 255, 0.15);
+    color: white;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s ease;
+}
+
+.retry-btn:hover {
+    background: rgba(255, 255, 255, 0.3);
+}
+
+/* Tooltip */
+.tooltip {
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    margin-bottom: 8px;
+    background: rgba(50, 50, 50, 0.95);
+    color: #e0e0e0;
+    padding: 6px 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    white-space: nowrap;
+    pointer-events: none;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    transition: opacity 0.15s;
+}
+
+.tooltip.hidden {
+    opacity: 0;
+}
