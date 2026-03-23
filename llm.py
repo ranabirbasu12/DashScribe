@@ -5,7 +5,7 @@ import threading
 
 import mlx.core as mx
 
-LLM_REPO = "mlx-community/Qwen3.5-4B-4bit"
+LLM_REPO = "mlx-community/Qwen3.5-0.8B-MLX-4bit"
 
 # Token headroom: output ≈ input length + some margin for formatting changes
 _TOKEN_HEADROOM = 1.3
@@ -27,8 +27,8 @@ class LocalLLM:
         self.download_message = ""
         self.download_progress = 0.0  # 0.0 to 1.0
         self._download_thread = None
-        # Expected total model size in bytes (Qwen3.5-4B-4bit)
-        self._expected_size_bytes = 2_900_000_000
+        # Expected total model size in bytes (Qwen3.5-0.8B-MLX-4bit)
+        self._expected_size_bytes = 600_000_000
 
     def _cache_dir(self) -> str:
         """Return the HuggingFace cache directory for this model."""
@@ -76,7 +76,7 @@ class LocalLLM:
                 self.download_progress = 1.0
             else:
                 self.download_status = "downloading"
-                self.download_message = "Downloading language model (~2.9 GB)..."
+                self.download_message = "Downloading language model (~600 MB)..."
                 self.download_progress = 0.0
             self._ensure_loaded()
             self.download_status = "ready"
@@ -89,6 +89,11 @@ class LocalLLM:
     def _ensure_loaded(self):
         if self._model is not None:
             return
+        # Suppress transformers 5.x startup checks that can hang in py2app bundles
+        os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
+        os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+        os.environ.setdefault("TRANSFORMERS_OFFLINE", "0")
+        os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
         import mlx_lm
         self._mlx_lm = mlx_lm
         self._model, self._tokenizer = mlx_lm.load(self.model_repo)

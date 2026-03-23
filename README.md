@@ -69,7 +69,7 @@ Every word is processed on your Mac. Nothing leaves your machine — ever.
 - **Snippets** — voice-triggered text expansion ("my calendar link" becomes your actual URL).
 - **Personal Dictionary** — teach Whisper your names, jargon, and technical terms.
 
-AI features use a local 4B-parameter LLM (~2.9 GB). DashScribe asks before downloading. Everything stays on-device.
+AI features use a local 4B-parameter LLM (~600 MB). DashScribe asks before downloading. Everything stays on-device.
 
 ### ClassNote
 Record lectures, talks, or presentations with live transcription. Segments appear in real-time as the speaker pauses. Review later with audio playback synced to text. Organize with labels and full-text search.
@@ -104,7 +104,7 @@ Longer recordings are *faster* because the VAD pipeline transcribes segments whi
 | Component | RAM |
 |:---:|:---:|
 | Whisper large-v3-turbo | ~1.6 GB |
-| Qwen3.5-4B (AI features) | ~2.9 GB |
+| Qwen3.5-4B (AI features) | ~600 MB |
 | App + Python + FastAPI | ~0.3 GB |
 
 16 GB Mac: comfortable. 8 GB Mac: works without AI features.

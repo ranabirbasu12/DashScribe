@@ -299,6 +299,7 @@ def main():
         settings=settings,
         pipeline=hotkey_pipeline,
         cancel_recording_callback=getattr(app.state, "cancel_active_recording", None),
+        llm=llm,
     )
     app.state.hotkey = hotkey
     hotkey.start()

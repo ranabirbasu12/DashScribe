@@ -270,9 +270,10 @@
             modelStatus.textContent = '';
             modelStatus.classList.add('status-ready');
             modelStatus.appendChild(dot);
-            modelStatus.appendChild(document.createTextNode(' Ready'));
+            modelStatus.appendChild(document.createTextNode(' Transcriber Ready'));
             progressContainer.classList.add('hidden');
             stopStatusPolling();
+            updateLlmStatusCapsule(); // Check LLM status once transcriber is ready
         } else if (status === 'downloading') {
             dot.className = 'dot downloading';
             modelStatus.textContent = '';
@@ -314,6 +315,75 @@
             progressMessage.textContent = message || 'Initializing...';
             progressContainer.classList.remove('hidden');
         }
+    }
+
+    var llmStatusEl = document.getElementById('llm-status');
+
+    var llmCapsulePollTimer = null;
+
+    function updateLlmStatusCapsule(statusOverride) {
+        if (!llmStatusEl) return;
+        fetch('/api/llm/status').then(function (r) { return r.json(); }).then(function (data) {
+            var s = statusOverride || data.status;
+            var dot = document.createElement('span');
+            llmStatusEl.textContent = '';
+            llmStatusEl.className = 'model-status';
+            var needsPoll = false;
+
+            if (!data.available) {
+                dot.className = 'dot';
+                llmStatusEl.classList.add('llm-off');
+                llmStatusEl.appendChild(dot);
+                llmStatusEl.appendChild(document.createTextNode(' LLM Off'));
+            } else if (data.loaded || s === 'ready') {
+                dot.className = 'dot ready';
+                llmStatusEl.classList.add('llm-ready');
+                llmStatusEl.appendChild(dot);
+                llmStatusEl.appendChild(document.createTextNode(' LLM Ready'));
+            } else if (s === 'downloading') {
+                dot.className = 'dot downloading';
+                llmStatusEl.classList.add('llm-downloading');
+                llmStatusEl.appendChild(dot);
+                llmStatusEl.appendChild(document.createTextNode(' LLM Downloading...'));
+                needsPoll = true;
+            } else if (s === 'loading') {
+                dot.className = 'dot loading';
+                llmStatusEl.classList.add('llm-loading');
+                llmStatusEl.appendChild(dot);
+                llmStatusEl.appendChild(document.createTextNode(' LLM Loading...'));
+                needsPoll = true;
+            } else if (s === 'error') {
+                dot.className = 'dot error';
+                llmStatusEl.classList.add('llm-error');
+                llmStatusEl.appendChild(dot);
+                llmStatusEl.appendChild(document.createTextNode(' LLM Error'));
+            } else {
+                // idle — check if AI features are even enabled
+                var aiToggle = document.getElementById('ai-features-toggle');
+                if (aiToggle && aiToggle.checked && data.cached) {
+                    dot.className = 'dot loading';
+                    llmStatusEl.classList.add('llm-loading');
+                    llmStatusEl.appendChild(dot);
+                    llmStatusEl.appendChild(document.createTextNode(' LLM Standby'));
+                    needsPoll = true;
+                } else {
+                    dot.className = 'dot';
+                    llmStatusEl.classList.add('llm-off');
+                    llmStatusEl.appendChild(dot);
+                    llmStatusEl.appendChild(document.createTextNode(' LLM Off'));
+                }
+            }
+
+            // Keep polling until LLM reaches a terminal state (ready, error, or off)
+            if (needsPoll && !llmCapsulePollTimer) {
+                llmCapsulePollTimer = setInterval(function () {
+                    updateLlmStatusCapsule();
+                }, 2000);
+            } else if (!needsPoll && llmCapsulePollTimer) {
+                clearInterval(llmCapsulePollTimer);
+                llmCapsulePollTimer = null;
+            }
+        }).catch(function () {});
     }
 
     function pollStatus() {
@@ -1431,6 +1501,7 @@
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ enabled: false }),
             });
+            updateLlmStatusCapsule();
             return;
         }
 
@@ -1495,7 +1566,7 @@
         title.style.cssText = 'margin:0 0 8px;font-size:15px;color:var(--text-primary);';
 
         var desc = document.createElement('p');
-        desc.textContent = 'AI features require a local language model (~2.9 GB). The download happens in the background \u2014 we\u2019ll let you know when it\u2019s ready.';
+        desc.textContent = 'AI features require a local language model (~600 MB). The download happens in the background \u2014 we\u2019ll let you know when it\u2019s ready.';
         desc.style.cssText = 'margin:0 0 16px;font-size:13px;color:var(--text-secondary);line-height:1.5;';
 
         var actions = document.createElement('div');
@@ -1589,6 +1660,7 @@
                 var data = await resp.json();
                 updateLlmProgressToast(data.status, data.message, data.progress);
 
+                updateLlmStatusCapsule(data.status);
                 if (data.status === 'ready') {
                     clearInterval(llmDownloadPollTimer);
                     llmDownloadPollTimer = null;
@@ -1600,6 +1672,7 @@
                     llmDownloadPollTimer = null;
                     aiFeaturesToggle.checked = false;
                     setSubTogglesEnabled(false);
+                    updateLlmStatusCapsule('error');
                     setTimeout(dismissLlmProgressToast, 5000);
                 }
             } catch (e) { /* ignore */ }

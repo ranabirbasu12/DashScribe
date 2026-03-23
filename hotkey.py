@@ -81,12 +81,14 @@ class GlobalHotkey:
         pipeline=None,
         cancel_recording_callback=None,
         get_classnote_pipeline=None,
+        llm=None,
     ):
         self.recorder = recorder
         self.transcriber = transcriber
         self.state_manager = state_manager
         self.internal_clipboard = internal_clipboard or InternalClipboard()
         self.history = history
+        self.llm = llm
         self.settings = settings
         self.pipeline = pipeline
         self.cancel_recording_callback = cancel_recording_callback
@@ -832,6 +834,17 @@ class GlobalHotkey:
                         raise RuntimeError("DEBUG: forced error for retry testing")
 
                 if text:
+                    # LLM post-processing (Smart Cleanup, Context Formatting, Snippets)
+                    raw_text = None
+                    if self.llm is not None and self.settings:
+                        try:
+                            from app import _post_process
+                            processed = _post_process(text, self.llm, self.settings)
+                            if processed and processed != text:
+                                raw_text = text
+                                text = processed
+                        except Exception as e:
+                            print(f"Hotkey LLM post-process failed: {e}")
                     self.internal_clipboard.set_text(text)
                     if self._should_auto_insert():
                         try:
@@ -844,6 +857,7 @@ class GlobalHotkey:
                             duration=audio_duration,
                             latency=elapsed,
                             source="dictation",
+                            raw_text=raw_text,
                         )
                 gc.collect()
                 self.state_manager.set_state(AppState.IDLE)
@@ -875,6 +889,17 @@ class GlobalHotkey:
                     if _app_module._debug_error_count % 2 == 1:
                         raise RuntimeError("DEBUG: forced error for retry testing")
                 if text:
+                    # LLM post-processing
+                    raw_text = None
+                    if self.llm is not None and self.settings:
+                        try:
+                            from app import _post_process
+                            processed = _post_process(text, self.llm, self.settings)
+                            if processed and processed != text:
+                                raw_text = text
+                                text = processed
+                        except Exception as e:
+                            print(f"Hotkey LLM post-process failed: {e}")
                     self.internal_clipboard.set_text(text)
                     if self._should_auto_insert():
                         try:
@@ -887,6 +912,7 @@ class GlobalHotkey:
                             duration=audio_duration,
                             latency=elapsed,
                             source="dictation",
+                            raw_text=raw_text,
                         )
                 try:
                     os.unlink(wav_path)

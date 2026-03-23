@@ -64,6 +64,16 @@ if [ -d "$SITE_PKGS/google" ]; then
     echo "  Copied google namespace package (protobuf)"
 fi
 
+# Copy stdlib modules that mlx_lm/transformers need for weight deserialization.
+# py2app misses these — they are imported dynamically by safetensors/transformers.
+STDLIB="$(python3 -c 'import sysconfig; print(sysconfig.get_paths()["stdlib"])')"
+for mod in _compat_pickle pickletools pickle; do
+    if [ -f "$STDLIB/${mod}.py" ]; then
+        cp "$STDLIB/${mod}.py" "$RESOURCES/lib/python3.12/${mod}.py"
+        echo "  Copied stdlib: ${mod}"
+    fi
+done
+
 echo "=== Code signing ==="
 CERT_NAME="DashScribe Developer"
 if security find-identity -v -p codesigning 2>/dev/null | grep -q "\"${CERT_NAME}\""; then

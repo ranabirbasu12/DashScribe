@@ -208,6 +208,10 @@ def create_app(
                 pipe.load_vad()
             if hasattr(txr, 'warmup'):
                 txr.warmup()
+            # Preload LLM if AI features are enabled (smart_cleanup or context_formatting)
+            if llm and settings:
+                if settings.smart_cleanup or settings.context_formatting:
+                    llm.download_in_background()
         threading.Thread(target=_init_models, daemon=True).start()
         try:
             yield

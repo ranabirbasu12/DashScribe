@@ -1510,6 +1510,28 @@ body.theme-light .hero-pill {
     border-color: transparent;
 }
 
+/* LLM status capsule variants */
+.model-status.llm-off {
+    color: var(--text-tertiary);
+    opacity: 0.5;
+}
+.model-status.llm-ready {
+    color: var(--green);
+    background: var(--green-soft);
+    border-color: transparent;
+}
+.model-status.llm-loading {
+    color: var(--orange);
+}
+.model-status.llm-downloading {
+    color: var(--accent);
+}
+.model-status.llm-error {
+    color: var(--red);
+    background: var(--red-soft);
+    border-color: transparent;
+}
+
 .dot {
     width: 6px;
     height: 6px;

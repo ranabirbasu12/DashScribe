@@ -75,7 +75,8 @@ OPTIONS = {
         'pyperclip', 'pydantic', 'pydantic_core',
         'typing_extensions', 'annotated_types',
         # stdlib modules needed by mlx_lm / transformers for model loading
-        'pickletools',
+        # (safetensors and transformers require these for weight deserialization)
+        'pickletools', '_compat_pickle',
     ],
     'packages': [
         'mlx_whisper', 'mlx_lm', 'transformers', 'sentencepiece',
@@ -91,6 +92,10 @@ OPTIONS = {
         'sounddevice', '_sounddevice_data',
         # ONNX Runtime for VAD (has native libraries, must not be zipped)
         'onnxruntime',
+        # regex has native C extension + Python files — must not be zipped
+        'regex',
+        # markupsafe has native C extension needed by jinja2
+        'markupsafe',
         # PyObjC (mlx and PyObjCTools are namespace packages — handled separately)
         'objc', 'Quartz', 'AppKit', 'Foundation', 'WebKit',
         'CoreMedia', 'CoreFoundation', 'ScreenCaptureKit', 'AVFoundation',
