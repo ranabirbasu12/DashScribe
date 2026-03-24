@@ -1,5 +1,5 @@
 # tests/test_post_process.py
-"""Tests for _post_process() in app.py."""
+"""Tests for _post_process() in app.py (two-stage pipeline)."""
 from unittest.mock import MagicMock, patch
 from app import _post_process
 
@@ -25,68 +25,111 @@ def _make_llm(return_value="cleaned text"):
     return llm
 
 
+def _make_formatter(return_value=None):
+    """Create a mock formatter. If return_value is set, format() returns it."""
+    fmt = MagicMock()
+    fmt.is_loaded = return_value is not None
+    fmt.model_repo = "test/punct-model"
+    if return_value is not None:
+        fmt.format.return_value = return_value
+    return fmt
+
+
 # --- Short-circuit / passthrough tests ---
 
 def test_returns_empty_text_unchanged():
-    assert _post_process("", _make_llm(), FakeSettings(smart_cleanup=True)) == ""
+    text, s1, raw = _post_process("", _make_llm(), FakeSettings(smart_cleanup=True))
+    assert text == ""
+    assert s1 is None and raw is None
 
 
 def test_returns_none_unchanged():
-    assert _post_process(None, _make_llm(), FakeSettings(smart_cleanup=True)) is None
+    text, s1, raw = _post_process(None, _make_llm(), FakeSettings(smart_cleanup=True))
+    assert text is None
+    assert s1 is None and raw is None
 
 
-def test_returns_short_text_unchanged():
-    """Text with 5 or fewer words should bypass LLM."""
+def test_returns_short_text_unchanged_by_llm():
+    """Text with 5 or fewer words should bypass LLM but still go through formatter."""
     llm = _make_llm()
-    result = _post_process("hello world foo bar baz", llm, FakeSettings(smart_cleanup=True))
-    assert result == "hello world foo bar baz"
+    text, s1, raw = _post_process("hello world foo bar baz", llm, FakeSettings(smart_cleanup=True))
+    assert text == "hello world foo bar baz"
     llm.generate.assert_not_called()
 
 
 def test_returns_text_when_settings_none():
     llm = _make_llm()
-    result = _post_process("this is a longer sentence here", llm, None)
-    assert result == "this is a longer sentence here"
+    text, s1, raw = _post_process("this is a longer sentence here", llm, None)
+    assert text == "this is a longer sentence here"
     llm.generate.assert_not_called()
 
 
 def test_returns_text_when_all_toggles_off():
     """No LLM call when smart_cleanup, context_formatting, and snippets are all off."""
     llm = _make_llm()
-    result = _post_process(
+    text, s1, raw = _post_process(
         "this is a longer sentence here",
         llm,
         FakeSettings(smart_cleanup=False, context_formatting=False, snippets_prompt_fragment=None),
     )
-    assert result == "this is a longer sentence here"
+    assert text == "this is a longer sentence here"
     llm.generate.assert_not_called()
 
 
-# --- LLM invocation tests ---
+# --- Stage 1 (formatter) tests ---
+
+def test_stage1_runs_when_formatter_loaded():
+    fmt = _make_formatter("Hello world, this is formatted.")
+    text, s1, raw = _post_process(
+        "hello world this is formatted",
+        None,
+        FakeSettings(),
+        formatter=fmt,
+    )
+    assert text == "Hello world, this is formatted."
+    assert s1 == "Hello world, this is formatted."
+    assert raw == "hello world this is formatted"
+    fmt.format.assert_called_once()
+
+
+def test_stage1_skipped_when_formatter_not_loaded():
+    fmt = _make_formatter(None)
+    fmt.is_loaded = False
+    text, s1, raw = _post_process(
+        "hello world this is text",
+        None,
+        FakeSettings(),
+        formatter=fmt,
+    )
+    assert text == "hello world this is text"
+    assert s1 is None and raw is None
+
+
+# --- Stage 2 (LLM) tests ---
 
 def test_smart_cleanup_calls_llm():
     llm = _make_llm("cleaned up text")
-    result = _post_process(
+    text, s1, raw = _post_process(
         "um so I was like thinking about this thing",
         llm,
         FakeSettings(smart_cleanup=True),
     )
-    assert result == "cleaned up text"
+    assert text == "cleaned up text"
     llm.generate.assert_called_once()
     prompt = llm.generate.call_args.kwargs["system_prompt"]
     assert "verbal fillers" in prompt
-    assert "Output ONLY the formatted text" in prompt
+    assert "Output ONLY the refined text" in prompt
 
 
-def test_smart_cleanup_off_adds_no_change_wording():
+def test_smart_cleanup_off_no_filler_mention():
     """When smart_cleanup is off but snippets trigger LLM, prompt does not include filler removal."""
     llm = _make_llm("expanded text")
-    result = _post_process(
+    text, s1, raw = _post_process(
         "please use my email snippet here today",
         llm,
         FakeSettings(smart_cleanup=False, snippets_prompt_fragment="Expand: /email -> test@example.com"),
     )
-    assert result == "expanded text"
+    assert text == "expanded text"
     prompt = llm.generate.call_args.kwargs["system_prompt"]
     assert "verbal fillers" not in prompt
 
@@ -108,12 +151,12 @@ def test_context_formatting_adds_app_info():
     with patch("context.get_frontmost_app", return_value=("com.apple.mail", "Mail")), \
          patch("context.get_formatting_style", return_value="email"), \
          patch("context.get_style_prompt", return_value="Format as an email."):
-        result = _post_process(
+        text, s1, raw = _post_process(
             "hey can you send me the report by friday",
             llm,
             FakeSettings(context_formatting=True),
         )
-    assert result == "formatted"
+    assert text == "formatted"
     prompt = llm.generate.call_args.kwargs["system_prompt"]
     assert "Mail" in prompt
     assert "Format as an email." in prompt
@@ -123,37 +166,77 @@ def test_context_formatting_handles_import_error():
     """If context module raises, post-processing continues without context info."""
     llm = _make_llm("still works")
     with patch.dict("sys.modules", {"context": None}):
-        # Even if context import fails, smart_cleanup alone should still work
-        result = _post_process(
+        text, s1, raw = _post_process(
             "um so I was thinking about this thing today",
             llm,
             FakeSettings(smart_cleanup=True, context_formatting=True),
         )
-    assert result == "still works"
+    assert text == "still works"
     llm.generate.assert_called_once()
 
 
-def test_llm_returns_empty_falls_back_to_original():
-    """If LLM returns empty string, original text is preserved."""
+def test_llm_returns_empty_falls_back():
+    """If LLM returns empty string, Stage 1 output or original is preserved."""
     llm = _make_llm("")
     original = "this is a longer sentence that should be preserved"
-    result = _post_process(original, llm, FakeSettings(smart_cleanup=True))
-    assert result == original
+    text, s1, raw = _post_process(original, llm, FakeSettings(smart_cleanup=True))
+    assert text == original
 
 
-def test_llm_returns_none_falls_back_to_original():
-    """If LLM returns None, original text is preserved."""
+def test_llm_returns_none_falls_back():
+    """If LLM returns None, Stage 1 output or original is preserved."""
     llm = _make_llm(None)
     original = "this is a longer sentence that should be preserved"
-    result = _post_process(original, llm, FakeSettings(smart_cleanup=True))
-    assert result == original
+    text, s1, raw = _post_process(original, llm, FakeSettings(smart_cleanup=True))
+    assert text == original
 
 
-def test_first_arg_is_text_second_is_system_prompt():
-    """Verify the text is passed as positional arg and system_prompt as kwarg."""
-    llm = _make_llm("result")
-    input_text = "um well I was going to say something important"
-    _post_process(input_text, llm, FakeSettings(smart_cleanup=True))
+# --- Two-stage combined tests ---
+
+def test_both_stages_run():
+    """Stage 1 formats, then Stage 2 cleans up."""
+    fmt = _make_formatter("Hello world, this is properly punctuated.")
+    llm = _make_llm("Hello world, this is properly punctuated and cleaned.")
+    text, s1, raw = _post_process(
+        "hello world this is properly punctuated",
+        llm,
+        FakeSettings(smart_cleanup=True),
+        formatter=fmt,
+    )
+    assert text == "Hello world, this is properly punctuated and cleaned."
+    assert s1 == "Hello world, this is properly punctuated."
+    assert raw == "hello world this is properly punctuated"
+    # LLM should receive Stage 1 output, not raw
     args, kwargs = llm.generate.call_args
-    assert args[0] == input_text
+    assert args[0] == "Hello world, this is properly punctuated."
+
+
+def test_stage1_only_no_llm_features():
+    """Stage 1 runs but Stage 2 skipped when no AI features enabled."""
+    fmt = _make_formatter("Formatted text here nicely.")
+    llm = _make_llm("should not be called")
+    text, s1, raw = _post_process(
+        "formatted text here nicely",
+        llm,
+        FakeSettings(smart_cleanup=False),
+        formatter=fmt,
+    )
+    assert text == "Formatted text here nicely."
+    assert s1 == "Formatted text here nicely."
+    assert raw == "formatted text here nicely"
+    llm.generate.assert_not_called()
+
+
+def test_first_arg_is_stage1_output():
+    """LLM receives Stage 1 output when formatter is active."""
+    fmt = _make_formatter("Stage one output for the language model.")
+    llm = _make_llm("final result")
+    _post_process(
+        "stage one output for the language model",
+        llm,
+        FakeSettings(smart_cleanup=True),
+        formatter=fmt,
+    )
+    args, kwargs = llm.generate.call_args
+    assert args[0] == "Stage one output for the language model."
     assert "system_prompt" in kwargs

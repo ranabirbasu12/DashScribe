@@ -5,7 +5,7 @@ import threading
 
 import mlx.core as mx
 
-LLM_REPO = "mlx-community/Qwen3.5-0.8B-MLX-4bit"
+LLM_REPO = "mlx-community/Qwen2.5-1.5B-Instruct-4bit"
 
 # Token headroom: output ≈ input length + some margin for formatting changes
 _TOKEN_HEADROOM = 1.3
@@ -27,8 +27,8 @@ class LocalLLM:
         self.download_message = ""
         self.download_progress = 0.0  # 0.0 to 1.0
         self._download_thread = None
-        # Expected total model size in bytes (Qwen3.5-0.8B-MLX-4bit)
-        self._expected_size_bytes = 600_000_000
+        # Expected total model size in bytes (Qwen2.5-1.5B-Instruct-4bit)
+        self._expected_size_bytes = 1_100_000_000
 
     def _cache_dir(self) -> str:
         """Return the HuggingFace cache directory for this model."""
@@ -76,7 +76,7 @@ class LocalLLM:
                 self.download_progress = 1.0
             else:
                 self.download_status = "downloading"
-                self.download_message = "Downloading language model (~600 MB)..."
+                self.download_message = "Downloading language model (~1.1 GB)..."
                 self.download_progress = 0.0
             self._ensure_loaded()
             self.download_status = "ready"

@@ -90,6 +90,22 @@ class TranscriptionHistory:
             conn.execute(
                 "ALTER TABLE transcriptions ADD COLUMN raw_text TEXT"
             )
+        if "transcriber_model" not in columns:
+            conn.execute(
+                "ALTER TABLE transcriptions ADD COLUMN transcriber_model TEXT"
+            )
+        if "formatter_model" not in columns:
+            conn.execute(
+                "ALTER TABLE transcriptions ADD COLUMN formatter_model TEXT"
+            )
+        if "stage1_text" not in columns:
+            conn.execute(
+                "ALTER TABLE transcriptions ADD COLUMN stage1_text TEXT"
+            )
+        if "punct_model" not in columns:
+            conn.execute(
+                "ALTER TABLE transcriptions ADD COLUMN punct_model TEXT"
+            )
 
         conn.execute(
             "UPDATE transcriptions SET source = ? "
@@ -137,16 +153,22 @@ class TranscriptionHistory:
         latency: float = 0.0,
         source: str = SOURCE_DICTATION,
         raw_text: str | None = None,
+        transcriber_model: str | None = None,
+        formatter_model: str | None = None,
+        stage1_text: str | None = None,
+        punct_model: str | None = None,
     ):
         ts = datetime.now(timezone.utc).isoformat()
         source_val = self._normalize_source(source)
         word_count = self._count_words(text)
         sql = (
             "INSERT INTO transcriptions "
-            "(text, raw_text, timestamp, duration_seconds, latency_seconds, source, word_count) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)"
+            "(text, raw_text, timestamp, duration_seconds, latency_seconds, source, word_count, "
+            "transcriber_model, formatter_model, stage1_text, punct_model) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
-        params = (text, raw_text, ts, duration, latency, source_val, word_count)
+        params = (text, raw_text, ts, duration, latency, source_val, word_count,
+                  transcriber_model, formatter_model, stage1_text, punct_model)
         try:
             with self._connect() as conn:
                 conn.execute(sql, params)

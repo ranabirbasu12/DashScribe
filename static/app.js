@@ -1566,7 +1566,7 @@
         title.style.cssText = 'margin:0 0 8px;font-size:15px;color:var(--text-primary);';
 
         var desc = document.createElement('p');
-        desc.textContent = 'AI features require a local language model (~600 MB). The download happens in the background \u2014 we\u2019ll let you know when it\u2019s ready.';
+        desc.textContent = 'AI features require a local language model (~1.1 GB). The download happens in the background \u2014 we\u2019ll let you know when it\u2019s ready.';
         desc.style.cssText = 'margin:0 0 16px;font-size:13px;color:var(--text-secondary);line-height:1.5;';
 
         var actions = document.createElement('div');

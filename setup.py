@@ -47,7 +47,7 @@ OPTIONS = {
         # Project modules (some are dynamically imported)
         'app', 'recorder', 'transcriber', 'clipboard', 'hotkey',
         'state', 'history', 'config', 'internal_clipboard', 'system_audio', 'aec',
-        'vad', 'pipeline', 'permissions', 'version', 'updater', 'llm', 'context',
+        'vad', 'pipeline', 'permissions', 'version', 'updater', 'llm', 'formatter', 'context',
         # PyObjC frameworks
         'objc', 'Quartz', 'AppKit', 'Foundation', 'WebKit',
         'CoreMedia', 'ScreenCaptureKit', 'PyObjCTools', 'AVFoundation',

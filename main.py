@@ -27,6 +27,7 @@ from config import SettingsManager
 from internal_clipboard import InternalClipboard
 from updater import UpdateManager
 from llm import LocalLLM
+from formatter import PunctFormatter
 from lecture_store import LectureStore
 from classnote import ClassNotePipeline
 from meeting_store import MeetingStore
@@ -255,6 +256,7 @@ def main():
     internal_clipboard = InternalClipboard()
     updater = UpdateManager(settings=settings)
     llm = LocalLLM()
+    formatter = PunctFormatter()
     ui_pipeline = StreamingPipeline(transcriber)
     hotkey_pipeline = StreamingPipeline(transcriber)
 
@@ -276,6 +278,7 @@ def main():
         pipeline=ui_pipeline,
         updater=updater,
         llm=llm,
+        formatter=formatter,
         classnote_pipeline=classnote_pipeline,
         lecture_store=lecture_store,
         meeting_pipeline=meeting_pipeline,
@@ -300,6 +303,7 @@ def main():
         pipeline=hotkey_pipeline,
         cancel_recording_callback=getattr(app.state, "cancel_active_recording", None),
         llm=llm,
+        formatter=formatter,
     )
     app.state.hotkey = hotkey
     hotkey.start()

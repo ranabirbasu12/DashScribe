@@ -69,7 +69,7 @@ Every word is processed on your Mac. Nothing leaves your machine — ever.
 - **Snippets** — voice-triggered text expansion ("my calendar link" becomes your actual URL).
 - **Personal Dictionary** — teach Whisper your names, jargon, and technical terms.
 
-AI features use a local 4B-parameter LLM (~600 MB). DashScribe asks before downloading. Everything stays on-device.
+AI features use a local 1.5B-parameter LLM (~1.1 GB). DashScribe asks before downloading. Everything stays on-device.
 
 ### ClassNote
 Record lectures, talks, or presentations with live transcription. Segments appear in real-time as the speaker pauses. Review later with audio playback synced to text. Organize with labels and full-text search.
@@ -104,7 +104,7 @@ Longer recordings are *faster* because the VAD pipeline transcribes segments whi
 | Component | RAM |
 |:---:|:---:|
 | Whisper large-v3-turbo | ~1.6 GB |
-| Qwen3.5-4B (AI features) | ~600 MB |
+| Qwen2.5-1.5B (AI features) | ~1.1 GB |
 | App + Python + FastAPI | ~0.3 GB |
 
 16 GB Mac: comfortable. 8 GB Mac: works without AI features.
@@ -170,8 +170,12 @@ You speak into your Mac
   Raw speech-to-text on Apple Silicon GPU
        |
        v
-  LocalLLM (optional, Qwen3.5-4B-4bit)
-  Cleans up fillers, formats for target app
+  Stage 1: PunctFormatter (ONNX, ~50M params)
+  Fixes punctuation, capitalization, sentence boundaries
+       |
+       v
+  Stage 2: LocalLLM (optional, Qwen2.5-1.5B-Instruct-4bit)
+  Removes fillers, collapses self-corrections, adds paragraph breaks
        |
        v
   CGEventPost (kCGHIDEventTap)
@@ -217,7 +221,8 @@ DashScribe/
 | What | How |
 |---|---|
 | Speech-to-text | [mlx-whisper](https://github.com/ml-explore/mlx-examples) (large-v3-turbo) |
-| Text formatting | [mlx-lm](https://github.com/ml-explore/mlx-examples) (Qwen3.5-4B-4bit) |
+| Punctuation/caps (Stage 1) | [1-800-BAD-CODE/punct_cap_seg](https://huggingface.co/1-800-BAD-CODE/punctuation_fullstop_truecase_english) (ONNX) |
+| Text cleanup (Stage 2) | [mlx-lm](https://github.com/ml-explore/mlx-examples) (Qwen2.5-1.5B-Instruct-4bit) |
 | Voice detection | [Silero VAD](https://github.com/snakers4/silero-vad) (ONNX Runtime) |
 | Echo cancellation | NLMS adaptive filter |
 | System audio | ScreenCaptureKit |

@@ -82,9 +82,11 @@ class GlobalHotkey:
         cancel_recording_callback=None,
         get_classnote_pipeline=None,
         llm=None,
+        formatter=None,
     ):
         self.recorder = recorder
         self.transcriber = transcriber
+        self.formatter = formatter
         self.state_manager = state_manager
         self.internal_clipboard = internal_clipboard or InternalClipboard()
         self.history = history
@@ -834,17 +836,15 @@ class GlobalHotkey:
                         raise RuntimeError("DEBUG: forced error for retry testing")
 
                 if text:
-                    # LLM post-processing (Smart Cleanup, Context Formatting, Snippets)
-                    raw_text = None
-                    if self.llm is not None and self.settings:
-                        try:
-                            from app import _post_process
-                            processed = _post_process(text, self.llm, self.settings)
-                            if processed and processed != text:
-                                raw_text = text
-                                text = processed
-                        except Exception as e:
-                            print(f"Hotkey LLM post-process failed: {e}")
+                    # Two-stage post-processing
+                    try:
+                        from app import _post_process
+                        text, stage1_text, raw_text = _post_process(
+                            text, self.llm, self.settings, formatter=self.formatter
+                        )
+                    except Exception as e:
+                        print(f"Hotkey post-process failed: {e}")
+                        stage1_text, raw_text = None, None
                     self.internal_clipboard.set_text(text)
                     if self._should_auto_insert():
                         try:
@@ -858,6 +858,10 @@ class GlobalHotkey:
                             latency=elapsed,
                             source="dictation",
                             raw_text=raw_text,
+                            stage1_text=stage1_text,
+                            transcriber_model=self.transcriber.model_repo,
+                            formatter_model=self.llm.model_repo if (self.llm and raw_text and stage1_text != raw_text) else None,
+                            punct_model=self.formatter.model_repo if (self.formatter and stage1_text) else None,
                         )
                 gc.collect()
                 self.state_manager.set_state(AppState.IDLE)
@@ -889,17 +893,15 @@ class GlobalHotkey:
                     if _app_module._debug_error_count % 2 == 1:
                         raise RuntimeError("DEBUG: forced error for retry testing")
                 if text:
-                    # LLM post-processing
-                    raw_text = None
-                    if self.llm is not None and self.settings:
-                        try:
-                            from app import _post_process
-                            processed = _post_process(text, self.llm, self.settings)
-                            if processed and processed != text:
-                                raw_text = text
-                                text = processed
-                        except Exception as e:
-                            print(f"Hotkey LLM post-process failed: {e}")
+                    # Two-stage post-processing
+                    try:
+                        from app import _post_process
+                        text, stage1_text, raw_text = _post_process(
+                            text, self.llm, self.settings, formatter=self.formatter
+                        )
+                    except Exception as e:
+                        print(f"Hotkey post-process failed: {e}")
+                        stage1_text, raw_text = None, None
                     self.internal_clipboard.set_text(text)
                     if self._should_auto_insert():
                         try:
@@ -913,6 +915,10 @@ class GlobalHotkey:
                             latency=elapsed,
                             source="dictation",
                             raw_text=raw_text,
+                            stage1_text=stage1_text,
+                            transcriber_model=self.transcriber.model_repo,
+                            formatter_model=self.llm.model_repo if (self.llm and raw_text and stage1_text != raw_text) else None,
+                            punct_model=self.formatter.model_repo if (self.formatter and stage1_text) else None,
                         )
                 try:
                     os.unlink(wav_path)

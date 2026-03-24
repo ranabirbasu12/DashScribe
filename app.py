@@ -54,6 +54,7 @@ def create_app(
     pipeline=None,
     updater=None,
     llm=None,
+    formatter=None,
     classnote_pipeline=None,
     lecture_store=None,
     meeting_pipeline=None,
@@ -157,6 +158,7 @@ def create_app(
                 pipe,
                 llm=llm,
                 settings=settings,
+                formatter=formatter,
             )
 
     def _cancel_active_recording() -> bool:
@@ -208,7 +210,10 @@ def create_app(
                 pipe.load_vad()
             if hasattr(txr, 'warmup'):
                 txr.warmup()
-            # Preload LLM if AI features are enabled (smart_cleanup or context_formatting)
+            # Always preload Stage 1 formatter (punctuation/caps)
+            if formatter:
+                formatter.download_in_background()
+            # Preload Stage 2 LLM if AI features are enabled
             if llm and settings:
                 if settings.smart_cleanup or settings.context_formatting:
                     llm.download_in_background()
@@ -724,8 +729,8 @@ def create_app(
                         await ws.send_json({"type": "status", "status": "transcribing"})
                         def _ws_stop_locked():
                             with stop_lock:
-                                return _ws_stop_and_transcribe(rec, txr, pipe, llm=llm, settings=settings)
-                        text, elapsed, audio_duration, raw_text = await asyncio.to_thread(_ws_stop_locked)
+                                return _ws_stop_and_transcribe(rec, txr, pipe, llm=llm, settings=settings, formatter=formatter)
+                        text, elapsed, audio_duration, raw_text, stage1_text = await asyncio.to_thread(_ws_stop_locked)
                         if text is None:
                             sm.set_state(AppState.IDLE)
                             await ws.send_json({
@@ -747,6 +752,10 @@ def create_app(
                             latency=elapsed,
                             source="dictation",
                             raw_text=raw_text,
+                            stage1_text=stage1_text,
+                            transcriber_model=txr.model_repo,
+                            formatter_model=llm.model_repo if (llm and raw_text and stage1_text != raw_text) else None,
+                            punct_model=formatter.model_repo if (formatter and stage1_text) else None,
                         )
                         gc.collect()
                         sm.set_state(AppState.IDLE)
@@ -920,11 +929,11 @@ def create_app(
                             with stop_lock:
                                 sm.set_state(AppState.PROCESSING)
                                 try:
-                                    result = _retry_transcribe(txr, settings=settings, llm=llm)
+                                    result = _retry_transcribe(txr, settings=settings, llm=llm, formatter=formatter)
                                     if result is None:
                                         sm.set_state(AppState.ERROR)
                                         return
-                                    text, elapsed, audio_duration, raw_text = result
+                                    text, elapsed, audio_duration, raw_text, stage1_text = result
                                     if not text:
                                         sm.set_state(AppState.ERROR)
                                         return
@@ -940,6 +949,10 @@ def create_app(
                                         latency=elapsed,
                                         source="dictation",
                                         raw_text=raw_text,
+                                        stage1_text=stage1_text,
+                                        transcriber_model=txr.model_repo,
+                                        formatter_model=llm.model_repo if (llm and raw_text and stage1_text != raw_text) else None,
+                                        punct_model=formatter.model_repo if (formatter and stage1_text) else None,
                                     )
                                     gc.collect()
                                     sm.set_state(AppState.IDLE)
@@ -1555,39 +1568,66 @@ def create_app(
     return app
 
 
-def _post_process(text: str, llm, settings) -> str:
-    """Run LLM post-processing pipeline on transcribed text."""
-    if not text or len(text.split()) <= 5:
-        return text
-    if not settings:
-        return text
+def _post_process(text: str, llm, settings, formatter=None) -> tuple[str, str | None, str | None]:
+    """Two-stage formatting pipeline.
+
+    Stage 1: Punctuation/capitalization/segmentation (always runs if formatter loaded)
+    Stage 2: LLM intelligent cleanup (runs if AI features enabled)
+
+    Returns (final_text, stage1_text, raw_text):
+        - final_text: the text to paste/display
+        - stage1_text: after Stage 1 (None if Stage 1 didn't run)
+        - raw_text: original input (None if no processing ran)
+    """
+    if not text or not text.strip():
+        return text, None, None
+
+    raw_text = None
+    stage1_text = None
+    current = text
+
+    # --- Stage 1: Punctuation model (always runs if available) ---
+    if formatter and formatter.is_loaded:
+        try:
+            formatted = formatter.format(current)
+            if formatted and formatted != current:
+                raw_text = text
+                stage1_text = formatted
+                current = formatted
+        except Exception as e:
+            print(f"Stage 1 formatting failed: {e}")
+
+    # --- Stage 2: LLM cleanup (only if AI features enabled) ---
+    if not settings or not llm:
+        return current, stage1_text, raw_text
 
     needs_llm = settings.smart_cleanup or settings.context_formatting or settings.snippets_prompt_fragment
     if not needs_llm:
-        return text
+        return current, stage1_text, raw_text
 
-    # Base instructions — always applied
+    if len(current.split()) <= 5:
+        return current, stage1_text, raw_text
+
+    # Build Stage 2 prompt — punctuation/caps already handled by Stage 1
     lines = [
-        "You are a dictation formatter. The user spoke into a microphone and the "
-        "text below is the raw speech-to-text output. Your job is to produce "
-        "clean, readable text.",
+        "You are a dictation post-processor. The text below has already been "
+        "punctuated and capitalized. Your job is to refine it further.",
         "",
         "Rules:",
-        "- Fix capitalization: capitalize the first word of every sentence.",
-        "- Fix punctuation: add periods, commas, and question marks where natural "
-        "pauses and intonation indicate them. Remove duplicate or misplaced punctuation.",
         "- Add paragraph breaks (blank lines) when the topic or thought clearly shifts.",
-        "- Never add information that wasn't spoken. Never remove meaningful content.",
+        "- Collapse self-corrections (e.g., 'I went to the store no the mall' becomes 'I went to the mall').",
+        "- Never add information that wasn't spoken. Never answer questions in the text.",
+        "- Do not change punctuation or capitalization — that is already correct.",
+        "- Preserve the speaker's natural voice and word choices.",
     ]
 
-    # Smart cleanup — filler removal
     if settings.smart_cleanup:
         lines.append(
             "- Remove verbal fillers (um, uh, like, you know, I mean, so, basically) "
-            "and false starts or self-corrections. Keep the speaker's natural voice."
+            "and false starts, but only when they are clearly disfluencies — keep them "
+            "if they are part of natural casual speech."
         )
 
-    # Context-aware formatting
     if settings.context_formatting:
         try:
             from context import get_frontmost_app, get_formatting_style, get_style_prompt
@@ -1598,18 +1638,22 @@ def _post_process(text: str, llm, settings) -> str:
         except Exception:
             pass
 
-    # Snippets
     snippet_fragment = settings.snippets_prompt_fragment
     if snippet_fragment:
         lines.append(f"- {snippet_fragment}")
 
     lines.append("")
-    lines.append("Output ONLY the formatted text. No commentary, no preamble.")
+    lines.append("Output ONLY the refined text. No commentary, no preamble, no explanations.")
 
     system_prompt = "\n".join(lines)
+    result = llm.generate(current, system_prompt=system_prompt)
 
-    result = llm.generate(text, system_prompt=system_prompt)
-    return result if result else text
+    if result and result != current:
+        if raw_text is None:
+            raw_text = text  # Stage 1 didn't run but Stage 2 did
+        return result, stage1_text, raw_text
+
+    return current, stage1_text, raw_text
 
 
 # Cache for last recording's audio (numpy array) for retry
@@ -1698,8 +1742,8 @@ def _stop_and_transcribe(rec, txr, pipe, settings=None):
         return text or None, elapsed, audio_duration
 
 
-def _retry_transcribe(txr, settings=None, llm=None):
-    """Re-transcribe cached audio. Returns (text, elapsed, audio_duration, raw_text) or None."""
+def _retry_transcribe(txr, settings=None, llm=None, formatter=None):
+    """Re-transcribe cached audio. Returns (text, elapsed, audio_duration, raw_text, stage1_text) or None."""
     audio = _last_audio_cache.get("audio")
     if audio is None:
         return None
@@ -1709,30 +1753,25 @@ def _retry_transcribe(txr, settings=None, llm=None):
     start_time = time.time()
     text = txr.transcribe_array(audio, initial_prompt=initial_prompt)
     elapsed = round(time.time() - start_time, 2)
-    raw_text = None
-    if text and llm is not None:
-        processed = _post_process(text, llm, settings)
-        if processed and processed != text:
-            raw_text = text
-            text = processed
-    return text, elapsed, audio_duration, raw_text
+    if text:
+        text, stage1_text, raw_text = _post_process(text, llm, settings, formatter=formatter)
+    else:
+        stage1_text, raw_text = None, None
+    return text, elapsed, audio_duration, raw_text, stage1_text
 
 
-def _ws_stop_and_transcribe(rec, txr, pipe, llm=None, settings=None):
+def _ws_stop_and_transcribe(rec, txr, pipe, llm=None, settings=None, formatter=None):
     """Called from asyncio.to_thread for websocket stop.
 
-    Returns (text, elapsed, audio_duration, raw_text).
-    raw_text is the original transcription before LLM post-processing (None if no processing ran).
+    Returns (text, elapsed, audio_duration, raw_text, stage1_text).
     """
     text, elapsed, audio_duration = _stop_and_transcribe(rec, txr, pipe, settings=settings)
+    stage1_text = None
     raw_text = None
-    if text and llm is not None:
-        processed = _post_process(text, llm, settings)
-        if processed and processed != text:
-            raw_text = text
-            text = processed
+    if text:
+        text, stage1_text, raw_text = _post_process(text, llm, settings, formatter=formatter)
     gc.collect()
-    return text, elapsed, audio_duration, raw_text
+    return text, elapsed, audio_duration, raw_text, stage1_text
 
 
 def _bar_stop_and_transcribe(
@@ -1745,6 +1784,7 @@ def _bar_stop_and_transcribe(
     pipe=None,
     llm=None,
     settings=None,
+    formatter=None,
 ):
     """Background thread: stop recording, transcribe, update state."""
     sm.set_state(AppState.PROCESSING)
@@ -1753,12 +1793,7 @@ def _bar_stop_and_transcribe(
         if not text:
             sm.set_state(AppState.IDLE)
             return
-        raw_text = None
-        if text and llm is not None:
-            processed = _post_process(text, llm, settings)
-            if processed and processed != text:
-                raw_text = text
-                text = processed
+        text, stage1_text, raw_text = _post_process(text, llm, settings, formatter=formatter)
         app_clip.set_text(text)
         if auto_insert:
             try:
@@ -1771,6 +1806,10 @@ def _bar_stop_and_transcribe(
             latency=elapsed,
             source="dictation",
             raw_text=raw_text,
+            stage1_text=stage1_text,
+            transcriber_model=txr.model_repo if txr else None,
+            formatter_model=llm.model_repo if (llm and raw_text and stage1_text != raw_text) else None,
+            punct_model=formatter.model_repo if (formatter and stage1_text) else None,
         )
         gc.collect()
         sm.set_state(AppState.IDLE)

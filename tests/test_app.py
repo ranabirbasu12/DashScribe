@@ -1838,23 +1838,26 @@ def test_history_pagination():
 # --- _post_process function tests (lines 1433-1478) ---
 
 def test_post_process_empty_text():
-    """_post_process returns empty text unchanged."""
+    """_post_process returns empty text unchanged (tuple)."""
     from app import _post_process
-    assert _post_process("", None, None) == ""
-    assert _post_process(None, None, None) is None
+    text, s1, raw = _post_process("", None, None)
+    assert text == ""
+    text2, s12, raw2 = _post_process(None, None, None)
+    assert text2 is None
 
 
 def test_post_process_short_text():
-    """_post_process returns short text unchanged."""
+    """_post_process returns short text unchanged (tuple)."""
     from app import _post_process
-    assert _post_process("hi there", None, None) == "hi there"
+    text, s1, raw = _post_process("hi there", None, None)
+    assert text == "hi there"
 
 
 def test_post_process_no_settings():
     """_post_process returns text unchanged when no settings."""
     from app import _post_process
-    result = _post_process("This is a longer text with many words here now", None, None)
-    assert result == "This is a longer text with many words here now"
+    text, s1, raw = _post_process("This is a longer text with many words here now", None, None)
+    assert text == "This is a longer text with many words here now"
 
 
 def test_post_process_no_features_enabled():
@@ -1864,8 +1867,8 @@ def test_post_process_no_features_enabled():
     mock_settings.smart_cleanup = False
     mock_settings.context_formatting = False
     mock_settings.snippets_prompt_fragment = None
-    result = _post_process("This is a longer text with many words here now", MagicMock(), mock_settings)
-    assert result == "This is a longer text with many words here now"
+    text, s1, raw = _post_process("This is a longer text with many words here now", MagicMock(), mock_settings)
+    assert text == "This is a longer text with many words here now"
 
 
 def test_post_process_smart_cleanup():
@@ -1877,8 +1880,8 @@ def test_post_process_smart_cleanup():
     mock_settings.snippets_prompt_fragment = None
     mock_llm = MagicMock()
     mock_llm.generate.return_value = "Cleaned text with many words here now"
-    result = _post_process("This is a longer text with many words here now", mock_llm, mock_settings)
-    assert result == "Cleaned text with many words here now"
+    text, s1, raw = _post_process("This is a longer text with many words here now", mock_llm, mock_settings)
+    assert text == "Cleaned text with many words here now"
     mock_llm.generate.assert_called_once()
 
 
@@ -1891,12 +1894,12 @@ def test_post_process_llm_returns_none():
     mock_settings.snippets_prompt_fragment = None
     mock_llm = MagicMock()
     mock_llm.generate.return_value = None
-    text = "This is a longer text with many words here now"
-    result = _post_process(text, mock_llm, mock_settings)
-    assert result == text
+    original = "This is a longer text with many words here now"
+    text, s1, raw = _post_process(original, mock_llm, mock_settings)
+    assert text == original
 
 
-# --- _retry_transcribe tests (lines 1567-1584) ---
+# --- _retry_transcribe tests ---
 
 def test_retry_transcribe_no_cache():
     """_retry_transcribe returns None when no cached audio."""
@@ -1907,7 +1910,7 @@ def test_retry_transcribe_no_cache():
 
 
 def test_retry_transcribe_with_cache():
-    """_retry_transcribe transcribes cached audio."""
+    """_retry_transcribe transcribes cached audio (5-tuple)."""
     import numpy as np
     from app import _retry_transcribe, _last_audio_cache
     _last_audio_cache["audio"] = np.zeros(16000, dtype=np.float32)
@@ -1916,16 +1919,14 @@ def test_retry_transcribe_with_cache():
     mock_txr.transcribe_array.return_value = "Retried text"
     result = _retry_transcribe(mock_txr)
     assert result is not None
-    text, elapsed, audio_duration, raw_text = result
+    text, elapsed, audio_duration, raw_text, stage1_text = result
     assert text == "Retried text"
     assert audio_duration == 1.0
-    assert raw_text is None
-    # Cleanup
     _last_audio_cache["audio"] = None
 
 
 def test_retry_transcribe_with_llm():
-    """_retry_transcribe applies LLM post-processing."""
+    """_retry_transcribe applies two-stage post-processing (5-tuple)."""
     import numpy as np
     from app import _retry_transcribe, _last_audio_cache
     _last_audio_cache["audio"] = np.zeros(16000, dtype=np.float32)
@@ -1941,7 +1942,7 @@ def test_retry_transcribe_with_llm():
     mock_llm.generate.return_value = "Cleaned longer text with many words here now"
     result = _retry_transcribe(mock_txr, settings=mock_settings, llm=mock_llm)
     assert result is not None
-    text, elapsed, audio_duration, raw_text = result
+    text, elapsed, audio_duration, raw_text, stage1_text = result
     assert text == "Cleaned longer text with many words here now"
     assert raw_text == "This is a longer text with many words here now"
     _last_audio_cache["audio"] = None
