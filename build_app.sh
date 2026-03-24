@@ -74,6 +74,14 @@ for mod in _compat_pickle pickletools pickle; do
     fi
 done
 
+# Ensure project modules that py2app sometimes misses are in the bundle.
+for mod in formatter; do
+    if [ -f "${mod}.py" ] && [ ! -f "$RESOURCES/${mod}.pyc" ] && [ ! -f "$RESOURCES/${mod}.py" ]; then
+        cp "${mod}.py" "$RESOURCES/${mod}.py"
+        echo "  Copied project module: ${mod}"
+    fi
+done
+
 echo "=== Code signing ==="
 CERT_NAME="DashScribe Developer"
 if security find-identity -v -p codesigning 2>/dev/null | grep -q "\"${CERT_NAME}\""; then

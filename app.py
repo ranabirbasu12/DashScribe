@@ -552,6 +552,21 @@ def create_app(
             "progress": round(progress, 3),
         })
 
+    @app.get("/api/formatter/status")
+    async def formatter_status():
+        """Check if the Stage 1 punctuation formatter is loaded."""
+        if not formatter:
+            return JSONResponse({"available": False, "loaded": False, "status": "unavailable"})
+        progress = formatter.get_download_progress() if formatter.download_status == "downloading" else formatter.download_progress
+        return JSONResponse({
+            "available": True,
+            "cached": formatter.is_cached(),
+            "loaded": formatter.is_loaded,
+            "status": formatter.download_status,
+            "message": formatter.download_message,
+            "progress": round(progress, 3),
+        })
+
     @app.post("/api/llm/download")
     async def llm_download():
         """Start downloading the LLM model in the background."""
@@ -1590,7 +1605,7 @@ def _post_process(text: str, llm, settings, formatter=None) -> tuple[str, str | 
     if formatter and formatter.is_loaded:
         try:
             formatted = formatter.format(current)
-            if formatted and formatted != current:
+            if formatted:
                 raw_text = text
                 stage1_text = formatted
                 current = formatted

@@ -103,7 +103,7 @@ class PunctFormatter:
         config_path = hf_hub_download(self.model_repo, CONFIG_FILE)
 
         # Load config
-        with open(config_path, "r") as f:
+        with open(config_path, "r", encoding="utf-8") as f:
             self._config = yaml.safe_load(f)
         self._max_length = self._config.get("max_length", 256)
         raw_pre = self._config.get("pre_labels", ["<NULL>"])
@@ -142,8 +142,11 @@ class PunctFormatter:
                 print(f"Formatter load failed: {e}")
                 return text
 
-            # Tokenize
-            input_text = text.lower().strip()
+            # Strip existing punctuation and lowercase — the model expects
+            # unpunctuated text and adds its own punctuation from scratch.
+            import re
+            input_text = re.sub(r'[.!?,;:\-–—"()…]', '', text).lower().strip()
+            input_text = re.sub(r'\s+', ' ', input_text)  # collapse multiple spaces
             token_ids = self._sp.EncodeAsIds(input_text)
 
             if not token_ids:
@@ -244,18 +247,22 @@ class PunctFormatter:
             is_sentence_end = bool(seg_preds[idx])
 
             # Handle word boundary
-            if piece.startswith(WORD_BOUNDARY) and current:
+            has_boundary = piece.startswith(WORD_BOUNDARY)
+            if has_boundary and current:
                 current.append(" ")
-            char_start = 1 if piece.startswith(WORD_BOUNDARY) else 0
+            char_start = 1 if has_boundary else 0
             chars = piece[char_start:]
+            # cap_flags indices include the ▁ prefix, so offset when prefix is stripped
+            cap_offset = 1 if has_boundary else 0
 
             for ci, ch in enumerate(chars):
                 # Pre-punctuation (e.g., inverted question mark) at first char
                 if ci == 0 and pre_label is not None:
                     current.append(pre_label)
 
-                # Capitalization
-                if ci < len(cap_flags) and cap_flags[ci]:
+                # Capitalization — offset index to account for stripped ▁ prefix
+                cap_idx = ci + cap_offset
+                if cap_idx < len(cap_flags) and cap_flags[cap_idx]:
                     ch = ch.upper()
                 current.append(ch)
 
