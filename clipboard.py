@@ -43,13 +43,60 @@ def paste_clipboard() -> None:
     CGEventPost(kCGHIDEventTap, event_up)
 
 
+def _needs_leading_space() -> bool:
+    """Check if the character before the cursor in the focused field is a non-space.
+
+    Uses macOS Accessibility API to read the focused element's text and cursor
+    position. Returns True if a space should be prepended before pasting.
+    Fails silently (returns False) if Accessibility is unavailable.
+    """
+    try:
+        from ApplicationServices import (
+            AXUIElementCreateSystemWide,
+            AXUIElementCopyAttributeValue,
+        )
+        system = AXUIElementCreateSystemWide()
+        err, focused = AXUIElementCopyAttributeValue(system, 'AXFocusedUIElement', None)
+        if err != 0 or focused is None:
+            return False
+
+        # Get text content
+        err, value = AXUIElementCopyAttributeValue(focused, 'AXValue', None)
+        if err != 0 or not value or not isinstance(value, str):
+            return False
+
+        # Get cursor position (selected text range)
+        err, sel_range = AXUIElementCopyAttributeValue(focused, 'AXSelectedTextRange', None)
+        if err != 0 or sel_range is None:
+            return False
+
+        cursor_pos = sel_range.location
+        if cursor_pos <= 0 or cursor_pos > len(value):
+            return False
+
+        char_before = value[cursor_pos - 1]
+        # Need a space if the character before cursor is not already a space/newline
+        return char_before not in (' ', '\t', '\n', '\r')
+    except Exception:
+        return False
+
+
 def paste_text(text: str) -> None:
-    """Insert text into the currently focused input field without using clipboard."""
+    """Insert text into the currently focused input field without using clipboard.
+
+    Automatically prepends a space if the cursor follows existing text
+    (e.g., inserting after "Hello." produces "Hello. How are you" not "Hello.How are you").
+    """
     if not text:
         return
 
     # Small delay to avoid racing with focus changes right after recording stops.
     time.sleep(0.02)
+
+    # Check if we need a leading space
+    if _needs_leading_space():
+        text = " " + text
+
     source = CGEventSourceCreate(kCGEventSourceStateCombinedSessionState)
 
     # Post in chunks to avoid oversized event payloads in some apps.
