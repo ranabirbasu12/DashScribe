@@ -142,10 +142,28 @@ class PunctFormatter:
                 print(f"Formatter load failed: {e}")
                 return text
 
-            # Strip existing punctuation and lowercase — the model expects
+            # Strip sentence-ending punctuation and lowercase — the model expects
             # unpunctuated text and adds its own punctuation from scratch.
+            # Preserve: decimal points (5.9), symbols (%, $, &)
             import re
-            input_text = re.sub(r'[.!?,;:\-–—"()…]', '', text).lower().strip()
+            input_text = text
+            # Protect decimal points (digit.digit)
+            input_text = re.sub(r'(\d)\.(\d)', r'\1XDECX\2', input_text)
+            # Now strip sentence punctuation
+            input_text = re.sub(r'[.!?,;:\-–—"()…]', '', input_text)
+            # Restore decimal points
+            input_text = input_text.replace('XDECX', '.')
+            # Protect symbols that SentencePiece can't tokenize (outputs ⁇).
+            # $ passes through fine — the others don't.
+            _symbol_placeholders = [
+                ('%', 'XPCTX'),
+                ('&', 'XAMPX'),
+                ('#', 'XHSHX'),
+                ('@', 'XATSX'),
+            ]
+            for sym, placeholder in _symbol_placeholders:
+                input_text = input_text.replace(sym, placeholder)
+            input_text = input_text.lower().strip()
             input_text = re.sub(r'\s+', ' ', input_text)  # collapse multiple spaces
             token_ids = self._sp.EncodeAsIds(input_text)
 
@@ -186,7 +204,14 @@ class PunctFormatter:
             )
 
             # Decode to text
-            return self._decode(token_ids_flat, pre_flat, post_flat, cap_flat, seg_flat)
+            result = self._decode(token_ids_flat, pre_flat, post_flat, cap_flat, seg_flat)
+
+            # Restore symbols that were replaced before tokenization.
+            # Case-insensitive since the model may change casing of placeholders.
+            import re as _re
+            for sym, placeholder in _symbol_placeholders:
+                result = _re.sub(_re.escape(placeholder), sym, result, flags=_re.IGNORECASE)
+            return result
 
     def _make_windows(self, token_ids: list[int], max_content: int) -> list[list[int]]:
         """Split token_ids into overlapping windows of max_content length."""
@@ -240,6 +265,15 @@ class PunctFormatter:
 
         for idx, tid in enumerate(token_ids):
             piece = self._sp.IdToPiece(tid)
+            # Skip unknown tokens — preserve the original text chunk instead
+            if piece == "<unk>":
+                # Try to recover the original text for this token
+                decoded = self._sp.DecodeIds([tid])
+                if decoded and decoded != "<unk>":
+                    if current:
+                        current.append(" ")
+                    current.append(decoded)
+                continue
             pre_label = self._pre_labels[int(pre_preds[idx])] if int(pre_preds[idx]) < len(self._pre_labels) else None
             post_label = self._post_labels[int(post_preds[idx])] if int(post_preds[idx]) < len(self._post_labels) else None
             is_acronym = post_label == "<ACRONYM>"
