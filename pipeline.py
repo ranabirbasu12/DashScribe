@@ -185,6 +185,7 @@ class StreamingPipeline:
 
     def _worker_loop(self, segmenter: VADSegmenter):
         """Worker thread: dequeue sealed segments and transcribe them."""
+        prev_text = None  # Track previous segment for cross-segment context
         while True:
             try:
                 segment = segmenter.segment_queue.get(timeout=0.1)
@@ -200,10 +201,13 @@ class StreamingPipeline:
                 segment.start_sample,
                 segment.end_sample,
             )
-            result = self._process_segment(segment, sys_audio, sys_audio_aligned=True)
+            result = self._process_segment(
+                segment, sys_audio, sys_audio_aligned=True, prev_text=prev_text
+            )
             if result is not None:
                 with self._results_lock:
                     self._results.append(result)
+                prev_text = result.text  # Feed to next segment as context
 
             # Trim consumed system audio chunks to bound memory growth.
             self._trim_sys_audio_chunks(segment.end_sample)
@@ -214,6 +218,7 @@ class StreamingPipeline:
         sys_audio: Optional[np.ndarray],
         *,
         sys_audio_aligned: bool = False,
+        prev_text: Optional[str] = None,
     ) -> Optional[SegmentResult]:
         """Apply AEC to a segment, then transcribe it."""
         mic = segment.mic_audio
@@ -235,7 +240,7 @@ class StreamingPipeline:
                 print(f"Segment AEC failed, using raw audio: {e}")
 
         try:
-            text = self.transcriber.transcribe_array(mic)
+            text = self.transcriber.transcribe_array(mic, initial_prompt=prev_text)
             if text:
                 duration = len(segment.mic_audio) / self.sample_rate
                 return SegmentResult(

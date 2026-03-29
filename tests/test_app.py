@@ -63,6 +63,7 @@ def test_websocket_start_stop_flow(_mock_dur):
     mock_transcriber = MagicMock()
     mock_transcriber.transcribe.return_value = "Hello world."
     mock_transcriber.is_ready = True
+    mock_transcriber.model_repo = "mock-model"
 
     app = create_app(recorder=mock_recorder, transcriber=mock_transcriber)
     client = TestClient(app)

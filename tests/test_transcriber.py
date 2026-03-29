@@ -19,12 +19,11 @@ def test_transcribe_returns_text():
     t.is_ready = True
     result = t.transcribe("/tmp/test.wav")
     assert result == "Hello world."
-    mock_backend.transcribe.assert_called_once_with(
-        "/tmp/test.wav",
-        path_or_hf_repo="mlx-community/whisper-large-v3-turbo",
-        language="en",
-        condition_on_previous_text=False,
-    )
+    call_kwargs = mock_backend.transcribe.call_args[1]
+    assert call_kwargs["path_or_hf_repo"] == "mlx-community/whisper-large-v3-turbo"
+    assert call_kwargs["language"] == "en"
+    assert call_kwargs["condition_on_previous_text"] is False
+    assert "initial_prompt" in call_kwargs
 
 
 def test_transcribe_strips_whitespace():
@@ -54,7 +53,7 @@ def test_transcribe_array_passes_numpy():
 
 
 def test_transcribe_array_with_initial_prompt():
-    """transcribe_array() passes initial_prompt to the backend when provided."""
+    """transcribe_array() includes user prompt combined with style prompt."""
     mock_backend = MagicMock()
     mock_backend.transcribe.return_value = {"text": " DashScribe test."}
     t = WhisperTranscriber()
@@ -63,11 +62,11 @@ def test_transcribe_array_with_initial_prompt():
     result = t.transcribe_array(audio, initial_prompt="DashScribe, FastAPI")
     assert result == "DashScribe test."
     call_kwargs = mock_backend.transcribe.call_args[1]
-    assert call_kwargs["initial_prompt"] == "DashScribe, FastAPI"
+    assert "DashScribe, FastAPI" in call_kwargs["initial_prompt"]
 
 
 def test_transcribe_array_without_initial_prompt():
-    """transcribe_array() does NOT pass initial_prompt when not provided."""
+    """transcribe_array() always passes punctuation style prompt."""
     mock_backend = MagicMock()
     mock_backend.transcribe.return_value = {"text": " Hello."}
     t = WhisperTranscriber()
@@ -75,7 +74,8 @@ def test_transcribe_array_without_initial_prompt():
     audio = np.zeros(16000, dtype=np.float32)
     t.transcribe_array(audio)
     call_kwargs = mock_backend.transcribe.call_args[1]
-    assert "initial_prompt" not in call_kwargs
+    assert "initial_prompt" in call_kwargs
+    assert len(call_kwargs["initial_prompt"]) > 0
 
 
 def test_clean_hallucination_empty():
@@ -183,14 +183,14 @@ def test_backend_lazy_imports():
 
 
 def test_transcribe_with_initial_prompt():
-    """transcribe() passes initial_prompt to backend when provided."""
+    """transcribe() includes user prompt combined with style prompt."""
     mock_backend = MagicMock()
     mock_backend.transcribe.return_value = {"text": " Hello."}
     t = WhisperTranscriber()
     t._mlx_whisper = mock_backend
     t.transcribe("/tmp/test.wav", initial_prompt="DashScribe")
     call_kwargs = mock_backend.transcribe.call_args[1]
-    assert call_kwargs["initial_prompt"] == "DashScribe"
+    assert "DashScribe" in call_kwargs["initial_prompt"]
 
 
 # ------------------------------------------------------------------

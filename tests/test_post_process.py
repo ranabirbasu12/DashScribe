@@ -78,7 +78,8 @@ def test_returns_text_when_all_toggles_off():
 
 # --- Stage 1 (formatter) tests ---
 
-def test_stage1_runs_when_formatter_loaded():
+def test_stage1_runs_for_tracking_but_does_not_override():
+    """Stage 1 runs and records output but does NOT override Whisper's text."""
     fmt = _make_formatter("Hello world, this is formatted.")
     text, s1, raw = _post_process(
         "hello world this is formatted",
@@ -86,8 +87,8 @@ def test_stage1_runs_when_formatter_loaded():
         FakeSettings(),
         formatter=fmt,
     )
-    assert text == "Hello world, this is formatted."
-    assert s1 == "Hello world, this is formatted."
+    assert text == "hello world this is formatted"  # Whisper's text preserved
+    assert s1 == "Hello world, this is formatted."  # Stage 1 recorded for tracking
     assert raw == "hello world this is formatted"
     fmt.format.assert_called_once()
 
@@ -194,7 +195,7 @@ def test_llm_returns_none_falls_back():
 # --- Two-stage combined tests ---
 
 def test_both_stages_run():
-    """Stage 1 formats, then Stage 2 cleans up."""
+    """Stage 1 records for tracking, Stage 2 (LLM) operates on Whisper's original text."""
     fmt = _make_formatter("Hello world, this is properly punctuated.")
     llm = _make_llm("Hello world, this is properly punctuated and cleaned.")
     text, s1, raw = _post_process(
@@ -206,13 +207,13 @@ def test_both_stages_run():
     assert text == "Hello world, this is properly punctuated and cleaned."
     assert s1 == "Hello world, this is properly punctuated."
     assert raw == "hello world this is properly punctuated"
-    # LLM should receive Stage 1 output, not raw
+    # LLM receives Whisper's original text (not Stage 1 output)
     args, kwargs = llm.generate.call_args
-    assert args[0] == "Hello world, this is properly punctuated."
+    assert args[0] == "hello world this is properly punctuated"
 
 
 def test_stage1_only_no_llm_features():
-    """Stage 1 runs but Stage 2 skipped when no AI features enabled."""
+    """Stage 1 runs for tracking but Whisper text is preserved when no LLM features."""
     fmt = _make_formatter("Formatted text here nicely.")
     llm = _make_llm("should not be called")
     text, s1, raw = _post_process(
@@ -221,14 +222,14 @@ def test_stage1_only_no_llm_features():
         FakeSettings(smart_cleanup=False),
         formatter=fmt,
     )
-    assert text == "Formatted text here nicely."
-    assert s1 == "Formatted text here nicely."
+    assert text == "formatted text here nicely"  # Whisper's text preserved
+    assert s1 == "Formatted text here nicely."  # Stage 1 tracked
     assert raw == "formatted text here nicely"
     llm.generate.assert_not_called()
 
 
-def test_first_arg_is_stage1_output():
-    """LLM receives Stage 1 output when formatter is active."""
+def test_llm_receives_whisper_text_not_stage1():
+    """LLM receives Whisper's original text, not Stage 1 output."""
     fmt = _make_formatter("Stage one output for the language model.")
     llm = _make_llm("final result")
     _post_process(
@@ -238,5 +239,5 @@ def test_first_arg_is_stage1_output():
         formatter=fmt,
     )
     args, kwargs = llm.generate.call_args
-    assert args[0] == "Stage one output for the language model."
+    assert args[0] == "stage one output for the language model"
     assert "system_prompt" in kwargs

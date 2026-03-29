@@ -4,7 +4,9 @@ import gc
 import logging
 import os
 import re
+import subprocess
 import sys
+import tempfile
 import threading
 import time
 
@@ -39,7 +41,21 @@ def _get_static_dir():
 
 STATIC_DIR = _get_static_dir()
 SUPPORTED_AUDIO_EXT = {".wav", ".mp3", ".m4a", ".flac", ".ogg", ".webm", ".wma", ".aac"}
+SUPPORTED_VIDEO_EXT = {".mp4", ".mov", ".mkv", ".avi", ".wmv", ".flv", ".m4v", ".mpg", ".mpeg"}
+SUPPORTED_MEDIA_EXT = SUPPORTED_AUDIO_EXT | SUPPORTED_VIDEO_EXT
 MAX_RECORD_SECONDS = 600
+
+
+def _extract_audio(video_path: str) -> str:
+    """Extract audio from a video file to a temporary WAV using ffmpeg."""
+    tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+    tmp.close()
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", video_path, "-vn", "-acodec", "pcm_s16le",
+         "-ar", "16000", "-ac", "1", tmp.name],
+        capture_output=True, check=True,
+    )
+    return tmp.name
 WARNING_SECONDS = 540
 
 
@@ -285,7 +301,10 @@ def create_app(
             result = main_window.create_file_dialog(
                 webview.OPEN_DIALOG,
                 allow_multiple=False,
-                file_types=("Audio Files (*.wav;*.mp3;*.m4a;*.flac;*.ogg;*.webm;*.wma;*.aac)",),
+                file_types=(
+                    "Media Files (*.wav;*.mp3;*.m4a;*.flac;*.ogg;*.webm;*.wma;*.aac;"
+                    "*.mp4;*.mov;*.mkv;*.avi;*.wmv;*.flv;*.m4v;*.mpg;*.mpeg)",
+                ),
             )
             path = result[0] if result else None
             return JSONResponse({"path": path})
@@ -802,20 +821,30 @@ def create_app(
                             "message": f"File not found: {file_path}",
                         })
                         continue
-                    if p.suffix.lower() not in SUPPORTED_AUDIO_EXT:
+                    if p.suffix.lower() not in SUPPORTED_MEDIA_EXT:
                         await ws.send_json({
                             "type": "error",
                             "message": f"Unsupported format: {p.suffix}",
                         })
                         continue
+                    is_video = p.suffix.lower() in SUPPORTED_VIDEO_EXT
                     await ws.send_json({
                         "type": "file_status",
                         "status": "transcribing",
-                        "message": f"Transcribing {p.name}...",
+                        "message": f"{'Extracting audio from' if is_video else 'Transcribing'} {p.name}...",
                     })
+                    tmp_audio = None
                     try:
                         start_time = time.time()
-                        text = await asyncio.to_thread(txr.transcribe, str(p))
+                        if is_video:
+                            tmp_audio = await asyncio.to_thread(_extract_audio, str(p))
+                            await ws.send_json({
+                                "type": "file_status",
+                                "status": "transcribing",
+                                "message": f"Transcribing {p.name}...",
+                            })
+                        transcribe_path = tmp_audio if tmp_audio else str(p)
+                        text = await asyncio.to_thread(txr.transcribe, transcribe_path)
                         elapsed = round(time.time() - start_time, 2)
                         app_clip.set_text(text)
                         out_name = f"{p.stem}_{date.today().isoformat()}_transcription.txt"
@@ -833,6 +862,12 @@ def create_app(
                             "type": "error",
                             "message": str(e),
                         })
+                    finally:
+                        if tmp_audio:
+                            try:
+                                os.unlink(tmp_audio)
+                            except OSError:
+                                pass
 
                 elif action == "status":
                     status_data = {
@@ -1601,14 +1636,17 @@ def _post_process(text: str, llm, settings, formatter=None) -> tuple[str, str | 
     stage1_text = None
     current = text
 
-    # --- Stage 1: Punctuation model (always runs if available) ---
+    # --- Stage 1: Punctuation model (runs for tracking, does not override Whisper) ---
+    # Whisper's punctuation is audio-informed (it hears pauses). The text-only
+    # punct model sometimes places punctuation wrong because it can't hear audio.
+    # We run Stage 1 for comparison/tracking only — Whisper's output is the primary.
     if formatter and formatter.is_loaded:
         try:
             formatted = formatter.format(current)
             if formatted:
                 raw_text = text
                 stage1_text = formatted
-                current = formatted
+                # Do NOT override current — keep Whisper's audio-informed punctuation
         except Exception as e:
             print(f"Stage 1 formatting failed: {e}")
 

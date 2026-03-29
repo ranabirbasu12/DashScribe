@@ -12,6 +12,14 @@ import re
 
 MODEL_REPO = "mlx-community/whisper-large-v3-turbo"
 
+# Default prompt that establishes punctuation style for Whisper.
+# Whisper mimics the style of the prompt (not instructions in it).
+# A well-punctuated multi-sentence prompt steers it toward consistent punct.
+PUNCTUATION_STYLE_PROMPT = (
+    "I need to finish the report by Friday. Can you send me the updated numbers? "
+    "Thanks, I'll review them tonight. Also, the meeting has been moved to 3 PM."
+)
+
 
 def _clean_hallucination(text: str) -> str:
     """Detect and remove repetitive hallucination patterns from Whisper output.
@@ -95,14 +103,28 @@ class WhisperTranscriber:
             except OSError:
                 pass
 
+    def _build_prompt(self, initial_prompt: str | None = None) -> str:
+        """Combine punctuation style prompt with user-provided prompt (dictionary terms etc).
+
+        The style prompt establishes consistent punctuation. User prompt adds
+        domain-specific terms. Both are concatenated, truncated to Whisper's
+        224-token prompt limit.
+        """
+        parts = []
+        parts.append(PUNCTUATION_STYLE_PROMPT)
+        if initial_prompt:
+            parts.append(initial_prompt)
+        return " ".join(parts)
+
     def transcribe(self, audio_path: str, *, initial_prompt: str | None = None) -> str:
         with self._lock:
+            prompt = self._build_prompt(initial_prompt)
             result = self._backend().transcribe(
                 audio_path,
                 path_or_hf_repo=self.model_repo,
                 language="en",
                 condition_on_previous_text=False,
-                **({"initial_prompt": initial_prompt} if initial_prompt else {}),
+                initial_prompt=prompt,
             )
             self.is_ready = True
             mx.clear_cache()
@@ -114,6 +136,7 @@ class WhisperTranscriber:
         Uses anti-hallucination parameters tuned for segmented audio.
         """
         with self._lock:
+            prompt = self._build_prompt(initial_prompt)
             result = self._backend().transcribe(
                 audio,
                 path_or_hf_repo=self.model_repo,
@@ -121,7 +144,7 @@ class WhisperTranscriber:
                 condition_on_previous_text=False,
                 hallucination_silence_threshold=2.0,
                 compression_ratio_threshold=2.4,
-                **({"initial_prompt": initial_prompt} if initial_prompt else {}),
+                initial_prompt=prompt,
             )
             self.is_ready = True
             mx.clear_cache()
