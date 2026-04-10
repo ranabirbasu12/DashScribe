@@ -8,6 +8,7 @@
     const ctx = canvas.getContext('2d');
     const barIdle = document.querySelector('.bar-idle');
     const retryBtn = document.getElementById('retry-btn');
+    const processingCancelBtn = document.getElementById('processing-cancel-btn');
     const warningEl = document.getElementById('bar-warning');
 
     let ws = null;
@@ -26,6 +27,14 @@
         bar.className = 'bar ' + state;
         if (state !== 'idle') {
             tooltip.classList.add('hidden');
+        }
+        // Hide warning when returning to idle (timeout/cancel dismissed)
+        if (state === 'idle') {
+            warningEl.classList.add('hidden');
+            if (warningTimeout) {
+                clearTimeout(warningTimeout);
+                warningTimeout = null;
+            }
         }
         if (state === 'recording') {
             startWaveformAnimation();
@@ -80,6 +89,8 @@
         warningEl.textContent = message;
         warningEl.classList.remove('hidden');
         if (warningTimeout) clearTimeout(warningTimeout);
+        // Keep warning visible while error capsule is showing (5s auto-dismiss),
+        // then fade out. For non-error warnings, same duration works fine.
         warningTimeout = setTimeout(() => {
             warningEl.classList.add('hidden');
             warningTimeout = null;
@@ -158,6 +169,13 @@
     retryBtn.addEventListener('click', () => {
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ action: 'retry' }));
+        }
+    });
+
+    // Cancel button (in processing state)
+    processingCancelBtn.addEventListener('click', () => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ action: 'cancel' }));
         }
     });
 

@@ -150,7 +150,8 @@ html, body {
 
 /* Processing capsule */
 .bar-processing {
-    padding: 0 16px;
+    padding: 0 12px;
+    gap: 10px;
 }
 
 .processing-dots {

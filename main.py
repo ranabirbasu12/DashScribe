@@ -306,6 +306,7 @@ def main():
         formatter=formatter,
     )
     app.state.hotkey = hotkey
+    hotkey._broadcast_error = getattr(app.state, "broadcast_error", None)
     hotkey.start()
 
     if not hotkey.has_active_tap:
