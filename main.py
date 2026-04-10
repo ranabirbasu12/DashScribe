@@ -32,6 +32,7 @@ from lecture_store import LectureStore
 from classnote import ClassNotePipeline
 from meeting_store import MeetingStore
 from meeting import MeetingPipeline
+from device_monitor import DeviceMonitor
 
 HOST = "127.0.0.1"
 PORT = 8765
@@ -307,6 +308,118 @@ def main():
     )
     app.state.hotkey = hotkey
     hotkey.start()
+
+    # --- Audio device hot-switching ---
+    device_monitor = DeviceMonitor()
+
+    def _on_device_changed(device_name):
+        """Called by DeviceMonitor on a CoreAudio background thread."""
+        broadcast = getattr(app.state, "broadcast_device_event", None)
+        ui_recorder = getattr(app.state, "recorder", None)
+
+        if device_name is None:
+            # No input device available — stop active streams gracefully
+            for rec in (ui_recorder, hotkey_recorder):
+                if rec is None:
+                    continue
+                try:
+                    if rec.is_recording:
+                        rec._device_lost = True
+                        if rec._stream is not None:
+                            try:
+                                rec._stream.stop()
+                            except Exception:
+                                pass
+                            try:
+                                rec._stream.close()
+                            except Exception:
+                                pass
+                            rec._stream = None
+                except Exception as e:
+                    print(f"Device lost handling error: {e}")
+
+            # ClassNote: pause if active
+            cn_rec = getattr(classnote_pipeline, "_recorder", None)
+            if cn_rec is not None:
+                try:
+                    if cn_rec.is_recording:
+                        cn_rec.pause()
+                except Exception as e:
+                    print(f"ClassNote device lost error: {e}")
+
+            # Meeting: stop mic stream (ScreenCaptureKit system audio unaffected)
+            mt_rec = getattr(meeting_pipeline, "_recorder", None)
+            if mt_rec is not None:
+                try:
+                    if mt_rec.is_recording and mt_rec.mode == "full" and mt_rec._mic_stream is not None:
+                        try:
+                            mt_rec._mic_stream.stop()
+                        except Exception:
+                            pass
+                        try:
+                            mt_rec._mic_stream.close()
+                        except Exception:
+                            pass
+                        mt_rec._mic_stream = None
+                        mt_rec._mic_recorder = None
+                except Exception as e:
+                    print(f"Meeting device lost error: {e}")
+
+            if broadcast:
+                broadcast("device_lost")
+            return
+
+        # Device present — reconnect any active recorders
+        any_was_lost = False
+        for rec in (ui_recorder, hotkey_recorder):
+            if rec is None:
+                continue
+            try:
+                if getattr(rec, "_device_lost", False):
+                    any_was_lost = True
+                    rec._device_lost = False
+                    # Top-level dictation does not auto-resume on its own —
+                    # the user must restart manually. We only clear the flag.
+                elif rec.is_recording:
+                    rec.reconnect_stream()
+            except Exception as e:
+                print(f"Device changed reconnect error: {e}")
+
+        # ClassNote: resume if paused by device loss, else reconnect if recording
+        cn_rec = getattr(classnote_pipeline, "_recorder", None)
+        if cn_rec is not None:
+            try:
+                if cn_rec.is_paused:
+                    cn_rec.resume()
+                elif cn_rec.is_recording:
+                    cn_rec.reconnect_stream()
+            except Exception as e:
+                print(f"ClassNote reconnect error: {e}")
+
+        # Meeting: reconnect mic in full mode
+        mt_rec = getattr(meeting_pipeline, "_recorder", None)
+        if mt_rec is not None:
+            try:
+                if mt_rec.is_recording:
+                    mt_rec.reconnect_stream()
+            except Exception as e:
+                print(f"Meeting reconnect error: {e}")
+
+        if broadcast:
+            event_type = "device_restored" if any_was_lost else "device_changed"
+            broadcast(event_type, device_name)
+
+    device_monitor.on_device_changed = _on_device_changed
+    device_monitor.start()
+
+    # Ensure cleanup on app quit
+    import atexit
+    def _stop_device_monitor_on_quit():
+        try:
+            device_monitor.stop()
+        except Exception:
+            pass
+    atexit.register(_stop_device_monitor_on_quit)
 
     if not hotkey.has_active_tap:
         print(

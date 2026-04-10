@@ -275,6 +275,7 @@ def create_app(
     app.state.cancel_active_recording = _cancel_active_recording
     app.state.memory_telemetry = mem_telemetry
     app.state.broadcast_device_event = _broadcast_device_event
+    app.state.recorder = rec
 
     @app.get("/")
     async def index():
