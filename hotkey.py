@@ -69,6 +69,7 @@ class GlobalHotkey:
     DOUBLE_TAP_WINDOW = 0.5    # seconds — max gap between taps
     MAX_RECORD_SECONDS = 600   # 10 minutes
     WARNING_SECONDS = 540      # 9 minutes
+    PROCESSING_TIMEOUT_S = 5   # auto-cancel processing after 5 seconds
 
     def __init__(
         self,
@@ -95,6 +96,7 @@ class GlobalHotkey:
         self.pipeline = pipeline
         self.cancel_recording_callback = cancel_recording_callback
         self._get_classnote_pipeline = get_classnote_pipeline or (lambda: None)
+        self._broadcast_error = None  # Set by main.py after app.state is available
         self.snippet_callback = None  # Called when Cmd+Shift+S is pressed
         self._snippet_keys = frozenset({1})  # 'S' keycode
         self._snippet_modifiers = frozenset({"cmd", "shift"})
@@ -146,6 +148,7 @@ class GlobalHotkey:
         self._orphan_timer: threading.Timer | None = None
         self._warning_timer: threading.Timer | None = None
         self._max_timer: threading.Timer | None = None
+        self._processing_timeout_timer: threading.Timer | None = None
 
         # CGEventTap state
         self._tap = None
@@ -561,11 +564,17 @@ class GlobalHotkey:
         return True
 
     def _on_escape(self) -> bool:
-        """Cancel active recording on Escape. Returns True when handled."""
+        """Cancel active recording or processing on Escape. Returns True when handled."""
         if self._capture_mode:
             return False
 
         if self._cancel_hotkey_recording():
+            return True
+
+        # Cancel processing (timeout or manual escape)
+        if self.state_manager.state == AppState.PROCESSING:
+            self._cancel_processing_timeout()
+            self.state_manager.set_state(AppState.IDLE)
             return True
 
         if self.state_manager.state == AppState.RECORDING and self.cancel_recording_callback:
@@ -761,6 +770,28 @@ class GlobalHotkey:
             self._max_timer.cancel()
             self._max_timer = None
 
+    def _arm_processing_timeout(self):
+        self._cancel_processing_timeout()
+        def _on_timeout():
+            if self.state_manager.state == AppState.PROCESSING:
+                print(f"Hotkey processing timed out after {self.PROCESSING_TIMEOUT_S}s")
+                self.state_manager.set_state(AppState.ERROR)
+                self.state_manager.push_warning("Processing timed out")
+                if self._broadcast_error:
+                    try:
+                        self._broadcast_error("Processing timed out")
+                    except Exception:
+                        pass
+                threading.Timer(5.0, lambda: self.state_manager.set_state(AppState.IDLE) if self.state_manager.state == AppState.ERROR else None).start()
+        self._processing_timeout_timer = threading.Timer(self.PROCESSING_TIMEOUT_S, _on_timeout)
+        self._processing_timeout_timer.daemon = True
+        self._processing_timeout_timer.start()
+
+    def _cancel_processing_timeout(self):
+        if self._processing_timeout_timer is not None:
+            self._processing_timeout_timer.cancel()
+            self._processing_timeout_timer = None
+
     def _on_warning(self):
         self.state_manager.push_warning("Recording ends in 1 minute")
 
@@ -777,6 +808,7 @@ class GlobalHotkey:
         """Stop recording, transcribe, copy to clipboard."""
         self._processing = True
         self.state_manager.set_state(AppState.PROCESSING)
+        self._arm_processing_timeout()
         cn_pipeline = self._get_classnote_pipeline()
         try:
             use_streaming = (
@@ -791,6 +823,7 @@ class GlobalHotkey:
 
                 if mic_audio is None or len(mic_audio) == 0:
                     self.pipeline.cancel()
+                    self._cancel_processing_timeout()
                     self.state_manager.set_state(AppState.IDLE)
                     return
 
@@ -827,6 +860,11 @@ class GlobalHotkey:
                     from app import _last_audio_cache
                     _last_audio_cache["audio"] = None
 
+                self._cancel_processing_timeout()
+                # Bail if timed out or cancelled while transcribing
+                if self.state_manager.state != AppState.PROCESSING:
+                    return
+
                 # Debug: force error on odd attempts for retry testing
                 from app import _DEBUG_FORCE_FIRST_ERROR, _debug_error_count
                 import app as _app_module
@@ -845,6 +883,9 @@ class GlobalHotkey:
                     except Exception as e:
                         print(f"Hotkey post-process failed: {e}")
                         stage1_text, raw_text = None, None
+                    # Check again after post-processing
+                    if self.state_manager.state != AppState.PROCESSING:
+                        return
                     self.internal_clipboard.set_text(text)
                     if self._should_auto_insert():
                         try:
@@ -869,6 +910,7 @@ class GlobalHotkey:
                 # Original single-pass flow
                 wav_path = self.recorder.stop()
                 if not wav_path:
+                    self._cancel_processing_timeout()
                     self.state_manager.set_state(AppState.IDLE)
                     return
                 audio_duration = round(get_wav_duration(wav_path), 2)
@@ -885,6 +927,16 @@ class GlobalHotkey:
                 start_time = time.time()
                 text = self.transcriber.transcribe(wav_path)
                 elapsed = round(time.time() - start_time, 2)
+
+                self._cancel_processing_timeout()
+                # Bail if timed out or cancelled while transcribing
+                if self.state_manager.state != AppState.PROCESSING:
+                    try:
+                        os.unlink(wav_path)
+                    except OSError:
+                        pass
+                    return
+
                 # Debug: force error on odd attempts for retry testing
                 from app import _DEBUG_FORCE_FIRST_ERROR, _debug_error_count
                 import app as _app_module
@@ -902,6 +954,13 @@ class GlobalHotkey:
                     except Exception as e:
                         print(f"Hotkey post-process failed: {e}")
                         stage1_text, raw_text = None, None
+                    # Check again after post-processing
+                    if self.state_manager.state != AppState.PROCESSING:
+                        try:
+                            os.unlink(wav_path)
+                        except OSError:
+                            pass
+                        return
                     self.internal_clipboard.set_text(text)
                     if self._should_auto_insert():
                         try:
@@ -927,9 +986,12 @@ class GlobalHotkey:
                 gc.collect()
                 self.state_manager.set_state(AppState.IDLE)
         except Exception as e:
-            print(f"Hotkey transcription error: {e}")
-            self.state_manager.set_state(AppState.ERROR)
-            threading.Timer(5.0, lambda: self.state_manager.set_state(AppState.IDLE) if self.state_manager.state == AppState.ERROR else None).start()
+            self._cancel_processing_timeout()
+            # Don't overwrite if already timed out to ERROR
+            if self.state_manager.state == AppState.PROCESSING:
+                print(f"Hotkey transcription error: {e}")
+                self.state_manager.set_state(AppState.ERROR)
+                threading.Timer(5.0, lambda: self.state_manager.set_state(AppState.IDLE) if self.state_manager.state == AppState.ERROR else None).start()
         finally:
             self._processing = False
             # Resume ClassNote if it was paused for dictation

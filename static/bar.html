@@ -15,12 +15,16 @@
                 </svg>
             </button>
             <canvas id="waveform" width="132" height="24"></canvas>
-            <div id="bar-warning" class="bar-warning hidden"></div>
             <button id="stop-btn" class="bar-btn stop-btn" aria-label="Stop">
                 <div class="stop-icon"></div>
             </button>
         </div>
         <div class="bar-processing">
+            <button id="processing-cancel-btn" class="bar-btn cancel-btn" aria-label="Cancel processing">
+                <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
+                    <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+                </svg>
+            </button>
             <div class="processing-dots">
                 <span></span><span></span><span></span>
             </div>
@@ -34,6 +38,7 @@
             </button>
         </div>
     </div>
+    <div id="bar-warning" class="bar-warning hidden"></div>
     <div id="bar-toast" class="bar-toast hidden">
         <span class="bar-toast-dot"></span>
         <svg class="bar-toast-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

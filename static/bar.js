@@ -8,6 +8,7 @@
     const ctx = canvas.getContext('2d');
     const barIdle = document.querySelector('.bar-idle');
     const retryBtn = document.getElementById('retry-btn');
+    const processingCancelBtn = document.getElementById('processing-cancel-btn');
     const warningEl = document.getElementById('bar-warning');
 
     let ws = null;
@@ -26,6 +27,14 @@
         bar.className = 'bar ' + state;
         if (state !== 'idle') {
             tooltip.classList.add('hidden');
+        }
+        // Hide warning when returning to idle (timeout/cancel dismissed)
+        if (state === 'idle') {
+            warningEl.classList.add('hidden');
+            if (warningTimeout) {
+                clearTimeout(warningTimeout);
+                warningTimeout = null;
+            }
         }
         if (state === 'recording') {
             startWaveformAnimation();
@@ -194,6 +203,13 @@
     retryBtn.addEventListener('click', () => {
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ action: 'retry' }));
+        }
+    });
+
+    // Cancel button (in processing state)
+    processingCancelBtn.addEventListener('click', () => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ action: 'cancel' }));
         }
     });
 

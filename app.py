@@ -44,6 +44,7 @@ SUPPORTED_AUDIO_EXT = {".wav", ".mp3", ".m4a", ".flac", ".ogg", ".webm", ".wma",
 SUPPORTED_VIDEO_EXT = {".mp4", ".mov", ".mkv", ".avi", ".wmv", ".flv", ".m4v", ".mpg", ".mpeg"}
 SUPPORTED_MEDIA_EXT = SUPPORTED_AUDIO_EXT | SUPPORTED_VIDEO_EXT
 MAX_RECORD_SECONDS = 600
+PROCESSING_TIMEOUT_S = 5
 
 
 def _extract_audio(video_path: str) -> str:
@@ -143,16 +144,31 @@ def create_app(
     record_timer_lock = threading.Lock()
     record_warning_timer: threading.Timer | None = None
     record_max_timer: threading.Timer | None = None
+    processing_timeout_timer: threading.Timer | None = None
 
     # Wire recorder amplitude to state manager
     rec.on_amplitude = sm.push_amplitude
 
-    # --- Device-event broadcast ---
+    # --- Server-push broadcast infrastructure ---
     # Sinks are (loop, enqueue_fn) pairs registered by each active WS connection.
-    _device_sinks: list = []
-    _device_sinks_lock = threading.Lock()
+    # Main WS connections register in _main_ws_sinks; bar WS connections in _bar_ws_sinks.
+    # _broadcast_error pushes only to main sinks. _broadcast_device_event pushes to both.
+    _main_ws_sinks: list = []
+    _bar_ws_sinks: list = []
+    _sinks_lock = threading.Lock()
 
     _VALID_DEVICE_EVENTS = frozenset({"device_changed", "device_lost", "device_restored"})
+
+    def _broadcast_error(message: str):
+        """Push an error message to all connected main window /ws clients."""
+        msg = {"type": "error", "message": message}
+        with _sinks_lock:
+            sinks = list(_main_ws_sinks)
+        for (loop, enqueue) in sinks:
+            try:
+                loop.call_soon_threadsafe(enqueue, msg)
+            except Exception:
+                pass
 
     def _broadcast_device_event(event_type: str, device_name: str | None = None):
         """Broadcast a device change event to all main and bar WS clients.
@@ -165,13 +181,40 @@ def create_app(
         msg: dict = {"type": event_type}
         if device_name is not None:
             msg["device"] = device_name
-        with _device_sinks_lock:
-            sinks = list(_device_sinks)
+        with _sinks_lock:
+            sinks = list(_main_ws_sinks) + list(_bar_ws_sinks)
         for (loop, enqueue) in sinks:
             try:
                 loop.call_soon_threadsafe(enqueue, msg)
             except Exception:
                 pass
+
+    def _arm_processing_timeout():
+        """Start a timer that fires ERROR if processing exceeds PROCESSING_TIMEOUT_S."""
+        nonlocal processing_timeout_timer
+        _cancel_processing_timeout()
+        def _on_timeout():
+            if sm.state == AppState.PROCESSING:
+                print(f"Processing timed out after {PROCESSING_TIMEOUT_S}s")
+                sm.set_state(AppState.ERROR)
+                sm.push_warning("Processing timed out")
+                _broadcast_error("Processing timed out")
+                threading.Timer(5.0, lambda: sm.set_state(AppState.IDLE) if sm.state == AppState.ERROR else None).start()
+        processing_timeout_timer = threading.Timer(PROCESSING_TIMEOUT_S, _on_timeout)
+        processing_timeout_timer.daemon = True
+        processing_timeout_timer.start()
+
+    def _cancel_processing_timeout():
+        nonlocal processing_timeout_timer
+        if processing_timeout_timer is not None:
+            processing_timeout_timer.cancel()
+            processing_timeout_timer = None
+
+    def _cancel_processing():
+        """Cancel an in-flight processing operation (timeout or user-initiated)."""
+        _cancel_processing_timeout()
+        if sm.state == AppState.PROCESSING:
+            sm.set_state(AppState.IDLE)
 
     def _should_auto_insert() -> bool:
         if not settings:
@@ -201,6 +244,8 @@ def create_app(
                 llm=llm,
                 settings=settings,
                 formatter=formatter,
+                arm_timeout=_arm_processing_timeout,
+                cancel_timeout=_cancel_processing_timeout,
             )
 
     def _cancel_active_recording() -> bool:
@@ -275,6 +320,8 @@ def create_app(
     app.state.cancel_active_recording = _cancel_active_recording
     app.state.memory_telemetry = mem_telemetry
     app.state.broadcast_device_event = _broadcast_device_event
+    app.state.broadcast_error = _broadcast_error
+    app.state.cancel_processing = _cancel_processing
     app.state.recorder = rec
 
     @app.get("/")
@@ -768,10 +815,10 @@ def create_app(
             except asyncio.QueueFull:
                 pass
 
-        # Register as a device-event sink
+        # Register as a main WS sink for server-push messages (errors + device events)
         _main_sink = (loop, _main_enqueue)
-        with _device_sinks_lock:
-            _device_sinks.append(_main_sink)
+        with _sinks_lock:
+            _main_ws_sinks.append(_main_sink)
 
         try:
             async def _push_server_messages():
@@ -811,11 +858,30 @@ def create_app(
                         try:
                             _cancel_record_timers()
                             sm.set_state(AppState.PROCESSING)
+                            _arm_processing_timeout()
                             await ws.send_json({"type": "status", "status": "transcribing"})
                             def _ws_stop_locked():
                                 with stop_lock:
                                     return _ws_stop_and_transcribe(rec, txr, pipe, llm=llm, settings=settings, formatter=formatter)
-                            text, elapsed, audio_duration, raw_text, stage1_text = await asyncio.to_thread(_ws_stop_locked)
+                            try:
+                                text, elapsed, audio_duration, raw_text, stage1_text = await asyncio.wait_for(
+                                    asyncio.to_thread(_ws_stop_locked), timeout=PROCESSING_TIMEOUT_S
+                                )
+                            except asyncio.TimeoutError:
+                                # Timeout already handled by _arm_processing_timeout → ERROR state
+                                _cancel_processing_timeout()
+                                if sm.state != AppState.ERROR:
+                                    sm.set_state(AppState.ERROR)
+                                    threading.Timer(5.0, lambda: sm.set_state(AppState.IDLE) if sm.state == AppState.ERROR else None).start()
+                                await ws.send_json({
+                                    "type": "error",
+                                    "message": "Processing timed out",
+                                })
+                                continue
+                            _cancel_processing_timeout()
+                            # Check if cancelled/timed out while we were waiting
+                            if sm.state != AppState.PROCESSING:
+                                continue
                             if text is None:
                                 sm.set_state(AppState.IDLE)
                                 await ws.send_json({
@@ -852,6 +918,7 @@ def create_app(
                             })
                         except Exception as e:
                             _cancel_record_timers()
+                            _cancel_processing_timeout()
                             sm.set_state(AppState.ERROR)
                             await ws.send_json({
                                 "type": "error",
@@ -860,7 +927,10 @@ def create_app(
                             threading.Timer(5.0, lambda: sm.set_state(AppState.IDLE) if sm.state == AppState.ERROR else None).start()
 
                     elif action == "cancel":
-                        _cancel_active_recording()
+                        if sm.state == AppState.PROCESSING:
+                            _cancel_processing()
+                        else:
+                            _cancel_active_recording()
                         await ws.send_json({"type": "status", "status": "idle"})
 
                     elif action == "transcribe_file":
@@ -934,10 +1004,10 @@ def create_app(
         except WebSocketDisconnect:
             gc.collect()
         finally:
-            # Deregister device-event sink
-            with _device_sinks_lock:
+            # Deregister main WS sink
+            with _sinks_lock:
                 try:
-                    _device_sinks.remove(_main_sink)
+                    _main_ws_sinks.remove(_main_sink)
                 except ValueError:
                     pass
 
@@ -989,10 +1059,10 @@ def create_app(
         if settings:
             settings.on_hotkey_change(on_hotkey_change)
 
-        # Register this connection as a device-event sink
+        # Register this connection as a bar WS sink (device events only)
         _bar_sink = (loop, _enqueue)
-        with _device_sinks_lock:
-            _device_sinks.append(_bar_sink)
+        with _sinks_lock:
+            _bar_ws_sinks.append(_bar_sink)
 
         # Send initial hotkey display name
         if settings:
@@ -1035,7 +1105,10 @@ def create_app(
                             daemon=True,
                         ).start()
                     elif action == "cancel":
-                        _cancel_active_recording()
+                        if sm.state == AppState.PROCESSING:
+                            _cancel_processing()
+                        else:
+                            _cancel_active_recording()
                     elif action == "retry":
                         if sm.state != AppState.ERROR:
                             continue
@@ -1101,10 +1174,10 @@ def create_app(
                 elif on_hotkey_change in settings._hotkey_callbacks:
                     settings._hotkey_callbacks.remove(on_hotkey_change)
 
-            # Deregister device-event sink
-            with _device_sinks_lock:
+            # Deregister bar WS sink
+            with _sinks_lock:
                 try:
-                    _device_sinks.remove(_bar_sink)
+                    _bar_ws_sinks.remove(_bar_sink)
                 except ValueError:
                     pass
 
@@ -1909,15 +1982,27 @@ def _bar_stop_and_transcribe(
     llm=None,
     settings=None,
     formatter=None,
+    arm_timeout=None,
+    cancel_timeout=None,
 ):
     """Background thread: stop recording, transcribe, update state."""
     sm.set_state(AppState.PROCESSING)
+    if arm_timeout:
+        arm_timeout()
     try:
         text, elapsed, audio_duration = _stop_and_transcribe(rec, txr, pipe, settings=settings)
+        if cancel_timeout:
+            cancel_timeout()
+        # Bail if cancelled or timed out while transcribing
+        if sm.state != AppState.PROCESSING:
+            return
         if not text:
             sm.set_state(AppState.IDLE)
             return
         text, stage1_text, raw_text = _post_process(text, llm, settings, formatter=formatter)
+        # Check again after post-processing
+        if sm.state != AppState.PROCESSING:
+            return
         app_clip.set_text(text)
         if auto_insert:
             try:
@@ -1938,6 +2023,10 @@ def _bar_stop_and_transcribe(
         gc.collect()
         sm.set_state(AppState.IDLE)
     except Exception as e:
-        print(f"Bar transcription error: {e}")
-        sm.set_state(AppState.ERROR)
-        threading.Timer(5.0, lambda: sm.set_state(AppState.IDLE) if sm.state == AppState.ERROR else None).start()
+        if cancel_timeout:
+            cancel_timeout()
+        # Don't overwrite if already timed out to ERROR
+        if sm.state == AppState.PROCESSING:
+            print(f"Bar transcription error: {e}")
+            sm.set_state(AppState.ERROR)
+            threading.Timer(5.0, lambda: sm.set_state(AppState.IDLE) if sm.state == AppState.ERROR else None).start()

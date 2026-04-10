@@ -309,6 +309,7 @@ def main():
         formatter=formatter,
     )
     app.state.hotkey = hotkey
+    hotkey._broadcast_error = getattr(app.state, "broadcast_error", None)
     hotkey.start()
 
     # --- Audio device hot-switching ---
