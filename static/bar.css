@@ -12,13 +12,13 @@ html, body {
 .bar {
     --capsule-bg: rgba(30, 30, 30, 0.9);
     display: flex;
-    align-items: center;
+    align-items: flex-end;
     justify-content: center;
     height: 100%;
     width: 100%;
     position: relative;
-    overflow: hidden;
-    border-radius: 999px;
+    overflow: visible;
+    border-radius: 0;
 }
 
 /* Shared state container behavior */

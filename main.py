@@ -45,6 +45,8 @@ BAR_PROCESSING_W, BAR_PROCESSING_H = 120, 42
 BAR_ERROR_W, BAR_ERROR_H = 42, 42
 BAR_ANIM_DURATION = 0.3
 BAR_ANIM_FRAME_SEC = 0.014
+# Extra vertical space above the capsule for device-change toast
+BAR_TOAST_HEADROOM = 44
 
 
 def start_server(app):
@@ -447,10 +449,10 @@ def main():
         "",
         f"http://{HOST}:{PORT}/bar",
         width=BAR_IDLE_W,
-        height=BAR_IDLE_H,
+        height=BAR_IDLE_H + BAR_TOAST_HEADROOM,
         x=bar_x,
-        y=bar_y,
-        min_size=(80, 20),
+        y=bar_y - BAR_TOAST_HEADROOM,
+        min_size=(80, 20 + BAR_TOAST_HEADROOM),
         frameless=True,
         transparent=True,
         on_top=True,
@@ -484,8 +486,8 @@ def main():
 
         if start_w == target_w and start_h == target_h:
             x, y = get_bar_position(target_w, target_h)
-            bar_window.resize(target_w, target_h)
-            bar_window.move(x, y)
+            bar_window.resize(target_w, target_h + BAR_TOAST_HEADROOM)
+            bar_window.move(x, y - BAR_TOAST_HEADROOM)
             return
 
         steps = max(1, int(duration / BAR_ANIM_FRAME_SEC))
@@ -500,8 +502,8 @@ def main():
             w = round(start_w + (target_w - start_w) * eased)
             h = round(start_h + (target_h - start_h) * eased)
             x, y = get_bar_position(w, h)
-            bar_window.resize(w, h)
-            bar_window.move(x, y)
+            bar_window.resize(w, h + BAR_TOAST_HEADROOM)
+            bar_window.move(x, y - BAR_TOAST_HEADROOM)
 
             with bar_anim_lock:
                 bar_size["w"] = w
