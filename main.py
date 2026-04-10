@@ -314,8 +314,14 @@ def main():
     # --- Audio device hot-switching ---
     device_monitor = DeviceMonitor()
 
+    # Track device-loss state across callback invocations so the restore
+    # toast uses the correct wording ("X connected" vs "Input switched to X")
+    classnote_was_device_lost = False
+    meeting_was_device_lost = False
+
     def _on_device_changed(device_name):
         """Called by DeviceMonitor on a CoreAudio background thread."""
+        nonlocal classnote_was_device_lost, meeting_was_device_lost
         broadcast = getattr(app.state, "broadcast_device_event", None)
         ui_recorder = getattr(app.state, "recorder", None)
 
@@ -340,32 +346,22 @@ def main():
                 except Exception as e:
                     print(f"Device lost handling error: {e}")
 
-            # ClassNote: pause if active
-            cn_rec = getattr(classnote_pipeline, "_recorder", None)
-            if cn_rec is not None:
-                try:
-                    if cn_rec.is_recording:
-                        cn_rec.pause()
-                except Exception as e:
-                    print(f"ClassNote device lost error: {e}")
+            # ClassNote: pause pipeline if active
+            try:
+                if classnote_pipeline.is_active:
+                    classnote_pipeline.pause()
+                    classnote_was_device_lost = True
+            except Exception as e:
+                print(f"ClassNote device lost error: {e}")
 
-            # Meeting: stop mic stream (ScreenCaptureKit system audio unaffected)
-            mt_rec = getattr(meeting_pipeline, "_recorder", None)
-            if mt_rec is not None:
-                try:
-                    if mt_rec.is_recording and mt_rec.mode == "full" and mt_rec._mic_stream is not None:
-                        try:
-                            mt_rec._mic_stream.stop()
-                        except Exception:
-                            pass
-                        try:
-                            mt_rec._mic_stream.close()
-                        except Exception:
-                            pass
-                        mt_rec._mic_stream = None
-                        mt_rec._mic_recorder = None
-                except Exception as e:
-                    print(f"Meeting device lost error: {e}")
+            # Meeting: pause pipeline if active (MeetingRecorder.pause() only
+            # stops the mic stream; ScreenCaptureKit system audio keeps flowing)
+            try:
+                if meeting_pipeline.is_active:
+                    meeting_pipeline.pause()
+                    meeting_was_device_lost = True
+            except Exception as e:
+                print(f"Meeting device lost error: {e}")
 
             if broadcast:
                 broadcast("device_lost")
@@ -387,25 +383,33 @@ def main():
             except Exception as e:
                 print(f"Device changed reconnect error: {e}")
 
-        # ClassNote: resume if paused by device loss, else reconnect if recording
-        cn_rec = getattr(classnote_pipeline, "_recorder", None)
-        if cn_rec is not None:
-            try:
-                if cn_rec.is_paused:
-                    cn_rec.resume()
-                elif cn_rec.is_recording:
+        # ClassNote: resume pipeline if it was paused by device loss,
+        # else reconnect the stream directly if still active
+        try:
+            if classnote_was_device_lost and classnote_pipeline.is_paused:
+                classnote_pipeline.resume()
+                classnote_was_device_lost = False
+                any_was_lost = True
+            else:
+                cn_rec = getattr(classnote_pipeline, "_recorder", None)
+                if cn_rec is not None and cn_rec.is_recording:
                     cn_rec.reconnect_stream()
-            except Exception as e:
-                print(f"ClassNote reconnect error: {e}")
+        except Exception as e:
+            print(f"ClassNote reconnect error: {e}")
 
-        # Meeting: reconnect mic in full mode
-        mt_rec = getattr(meeting_pipeline, "_recorder", None)
-        if mt_rec is not None:
-            try:
-                if mt_rec.is_recording:
+        # Meeting: resume pipeline if it was paused by device loss,
+        # else reconnect the mic stream directly if still active
+        try:
+            if meeting_was_device_lost and meeting_pipeline.is_paused:
+                meeting_pipeline.resume()
+                meeting_was_device_lost = False
+                any_was_lost = True
+            else:
+                mt_rec = getattr(meeting_pipeline, "_recorder", None)
+                if mt_rec is not None and mt_rec.is_recording:
                     mt_rec.reconnect_stream()
-            except Exception as e:
-                print(f"Meeting reconnect error: {e}")
+        except Exception as e:
+            print(f"Meeting reconnect error: {e}")
 
         if broadcast:
             event_type = "device_restored" if any_was_lost else "device_changed"
