@@ -163,3 +163,41 @@ class TestMeetingRecorder:
         rec = mod.MeetingRecorder(mode="listen")
         result = rec.stop()
         assert result["system_audio_path"] is None
+
+
+def test_meeting_reconnect_stream_only_swaps_mic(tmp_path):
+    from unittest.mock import patch, MagicMock
+    from meeting_recorder import MeetingRecorder
+
+    rec = MeetingRecorder(mode="full")
+    sys_path = str(tmp_path / "sys.wav")
+    mic_path = str(tmp_path / "mic.wav")
+
+    with patch('meeting_recorder.sd.InputStream') as mock_stream_cls, \
+         patch.object(rec._sys_capture, 'start'), \
+         patch.object(rec._sys_capture, 'stop', return_value=MagicMock()):
+        first_mic = MagicMock()
+        mock_stream_cls.return_value = first_mic
+        rec.start(sys_path, mic_path)
+        assert rec.is_recording is True
+
+        second_mic = MagicMock()
+        mock_stream_cls.return_value = second_mic
+        rec.reconnect_stream()
+
+    first_mic.stop.assert_called_once()
+    first_mic.close.assert_called_once()
+    second_mic.start.assert_called_once()
+    assert rec._mic_stream is second_mic
+
+
+def test_meeting_reconnect_stream_noop_in_listen_mode(tmp_path):
+    from unittest.mock import patch
+    from meeting_recorder import MeetingRecorder
+
+    rec = MeetingRecorder(mode="listen")
+    rec.is_recording = True  # Simulate started state
+    with patch('meeting_recorder.sd.InputStream') as mock_stream_cls:
+        rec.reconnect_stream()
+        # No mic stream in listen mode — nothing to reconnect
+        mock_stream_cls.assert_not_called()
