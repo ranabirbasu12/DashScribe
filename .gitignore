@@ -21,3 +21,5 @@ htmlcov/
 .coverage-thresholds.json
 CLAUDE.md
 .env
+.worktrees/
+.superpowers/
