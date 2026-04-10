@@ -145,23 +145,47 @@ def create_app(
     record_warning_timer: threading.Timer | None = None
     record_max_timer: threading.Timer | None = None
     processing_timeout_timer: threading.Timer | None = None
-    # Connected main window WebSocket clients for broadcast messages
-    _main_ws_clients: set[WebSocket] = set()
-    _main_ws_lock = threading.Lock()
+
+    # Wire recorder amplitude to state manager
+    rec.on_amplitude = sm.push_amplitude
+
+    # --- Server-push broadcast infrastructure ---
+    # Sinks are (loop, enqueue_fn) pairs registered by each active WS connection.
+    # Main WS connections register in _main_ws_sinks; bar WS connections in _bar_ws_sinks.
+    # _broadcast_error pushes only to main sinks. _broadcast_device_event pushes to both.
+    _main_ws_sinks: list = []
+    _bar_ws_sinks: list = []
+    _sinks_lock = threading.Lock()
+
+    _VALID_DEVICE_EVENTS = frozenset({"device_changed", "device_lost", "device_restored"})
 
     def _broadcast_error(message: str):
         """Push an error message to all connected main window /ws clients."""
-        import asyncio as _aio
         msg = {"type": "error", "message": message}
-        with _main_ws_lock:
-            clients = list(_main_ws_clients)
-        for client in clients:
+        with _sinks_lock:
+            sinks = list(_main_ws_sinks)
+        for (loop, enqueue) in sinks:
             try:
-                loop = _aio.get_event_loop()
-            except RuntimeError:
-                continue
+                loop.call_soon_threadsafe(enqueue, msg)
+            except Exception:
+                pass
+
+    def _broadcast_device_event(event_type: str, device_name: str | None = None):
+        """Broadcast a device change event to all main and bar WS clients.
+
+        event_type: one of "device_changed", "device_lost", "device_restored"
+        device_name: friendly name of the device (None for device_lost)
+        """
+        if event_type not in _VALID_DEVICE_EVENTS:
+            return
+        msg: dict = {"type": event_type}
+        if device_name is not None:
+            msg["device"] = device_name
+        with _sinks_lock:
+            sinks = list(_main_ws_sinks) + list(_bar_ws_sinks)
+        for (loop, enqueue) in sinks:
             try:
-                loop.call_soon_threadsafe(_aio.ensure_future, client.send_json(msg))
+                loop.call_soon_threadsafe(enqueue, msg)
             except Exception:
                 pass
 
@@ -191,9 +215,6 @@ def create_app(
         _cancel_processing_timeout()
         if sm.state == AppState.PROCESSING:
             sm.set_state(AppState.IDLE)
-
-    # Wire recorder amplitude to state manager
-    rec.on_amplitude = sm.push_amplitude
 
     def _should_auto_insert() -> bool:
         if not settings:
@@ -300,6 +321,10 @@ def create_app(
     app.state.cancel_processing = _cancel_processing
     app.state.broadcast_error = _broadcast_error
     app.state.memory_telemetry = mem_telemetry
+    app.state.broadcast_device_event = _broadcast_device_event
+    app.state.broadcast_error = _broadcast_error
+    app.state.cancel_processing = _cancel_processing
+    app.state.recorder = rec
 
     @app.get("/")
     async def index():
@@ -781,185 +806,214 @@ def create_app(
     @app.websocket("/ws")
     async def websocket_endpoint(ws: WebSocket):
         await ws.accept()
-        with _main_ws_lock:
-            _main_ws_clients.add(ws)
+
+        # Queue for server-push messages (e.g. device events) from background threads
+        loop = asyncio.get_event_loop()
+        _main_queue: asyncio.Queue = asyncio.Queue(maxsize=64)
+
+        def _main_enqueue(msg: dict):
+            try:
+                _main_queue.put_nowait(msg)
+            except asyncio.QueueFull:
+                pass
+
+        # Register as a main WS sink for server-push messages (errors + device events)
+        _main_sink = (loop, _main_enqueue)
+        with _sinks_lock:
+            _main_ws_sinks.append(_main_sink)
+
         try:
-            while True:
-                data = await ws.receive_json()
-                action = data.get("action")
+            async def _push_server_messages():
+                """Drain the server-push queue and forward to client."""
+                while True:
+                    msg = await _main_queue.get()
+                    await ws.send_json(msg)
 
-                if action == "start":
-                    if rec.is_recording or sm.state == AppState.RECORDING:
-                        await ws.send_json({"type": "status", "status": "recording"})
-                        continue
-                    try:
-                        rec.start()
-                    except Exception as e:
-                        sm.set_state(AppState.ERROR)
-                        await ws.send_json({
-                            "type": "error",
-                            "message": f"Failed to start recording: {e}",
-                        })
-                        threading.Timer(5.0, lambda: sm.set_state(AppState.IDLE) if sm.state == AppState.ERROR else None).start()
-                        continue
-                    _arm_record_timers()
-                    sm.set_state(AppState.RECORDING)
-                    if pipe is not None and pipe.vad_available:
-                        sys_chunks = rec.get_sys_audio_chunks()
-                        started = pipe.start(sys_audio_chunks=sys_chunks)
-                        rec.on_vad_chunk = pipe.feed if started else None
-                    await ws.send_json({"type": "status", "status": "recording"})
+            async def _handle_commands():
+                while True:
+                    data = await ws.receive_json()
+                    action = data.get("action")
 
-                elif action == "stop":
-                    try:
-                        _cancel_record_timers()
-                        sm.set_state(AppState.PROCESSING)
-                        _arm_processing_timeout()
-                        await ws.send_json({"type": "status", "status": "transcribing"})
-                        def _ws_stop_locked():
-                            with stop_lock:
-                                return _ws_stop_and_transcribe(rec, txr, pipe, llm=llm, settings=settings, formatter=formatter)
+                    if action == "start":
+                        if rec.is_recording or sm.state == AppState.RECORDING:
+                            await ws.send_json({"type": "status", "status": "recording"})
+                            continue
                         try:
-                            text, elapsed, audio_duration, raw_text, stage1_text = await asyncio.wait_for(
-                                asyncio.to_thread(_ws_stop_locked), timeout=PROCESSING_TIMEOUT_S
-                            )
-                        except asyncio.TimeoutError:
-                            # Timeout already handled by _arm_processing_timeout → ERROR state
-                            _cancel_processing_timeout()
-                            if sm.state != AppState.ERROR:
-                                sm.set_state(AppState.ERROR)
-                                threading.Timer(5.0, lambda: sm.set_state(AppState.IDLE) if sm.state == AppState.ERROR else None).start()
+                            rec.start()
+                        except Exception as e:
+                            sm.set_state(AppState.ERROR)
                             await ws.send_json({
                                 "type": "error",
-                                "message": "Processing timed out",
+                                "message": f"Failed to start recording: {e}",
                             })
+                            threading.Timer(5.0, lambda: sm.set_state(AppState.IDLE) if sm.state == AppState.ERROR else None).start()
                             continue
-                        _cancel_processing_timeout()
-                        # Check if cancelled/timed out while we were waiting
-                        if sm.state != AppState.PROCESSING:
-                            continue
-                        if text is None:
+                        _arm_record_timers()
+                        sm.set_state(AppState.RECORDING)
+                        if pipe is not None and pipe.vad_available:
+                            sys_chunks = rec.get_sys_audio_chunks()
+                            started = pipe.start(sys_audio_chunks=sys_chunks)
+                            rec.on_vad_chunk = pipe.feed if started else None
+                        await ws.send_json({"type": "status", "status": "recording"})
+
+                    elif action == "stop":
+                        try:
+                            _cancel_record_timers()
+                            sm.set_state(AppState.PROCESSING)
+                            _arm_processing_timeout()
+                            await ws.send_json({"type": "status", "status": "transcribing"})
+                            def _ws_stop_locked():
+                                with stop_lock:
+                                    return _ws_stop_and_transcribe(rec, txr, pipe, llm=llm, settings=settings, formatter=formatter)
+                            try:
+                                text, elapsed, audio_duration, raw_text, stage1_text = await asyncio.wait_for(
+                                    asyncio.to_thread(_ws_stop_locked), timeout=PROCESSING_TIMEOUT_S
+                                )
+                            except asyncio.TimeoutError:
+                                # Timeout already handled by _arm_processing_timeout → ERROR state
+                                _cancel_processing_timeout()
+                                if sm.state != AppState.ERROR:
+                                    sm.set_state(AppState.ERROR)
+                                    threading.Timer(5.0, lambda: sm.set_state(AppState.IDLE) if sm.state == AppState.ERROR else None).start()
+                                await ws.send_json({
+                                    "type": "error",
+                                    "message": "Processing timed out",
+                                })
+                                continue
+                            _cancel_processing_timeout()
+                            # Check if cancelled/timed out while we were waiting
+                            if sm.state != AppState.PROCESSING:
+                                continue
+                            if text is None:
+                                sm.set_state(AppState.IDLE)
+                                await ws.send_json({
+                                    "type": "error",
+                                    "message": "Recording too short. Hold the button longer.",
+                                })
+                                continue
+                            app_clip.set_text(text)
+                            inserted = False
+                            if _should_auto_insert():
+                                try:
+                                    paste_text(text)
+                                    inserted = True
+                                except Exception as e:
+                                    print(f"Paste operation failed: {e}")
+                            hist.add(
+                                text,
+                                duration=audio_duration,
+                                latency=elapsed,
+                                source="dictation",
+                                raw_text=raw_text,
+                                stage1_text=stage1_text,
+                                transcriber_model=txr.model_repo,
+                                formatter_model=llm.model_repo if (llm and raw_text and stage1_text != raw_text) else None,
+                                punct_model=formatter.model_repo if (formatter and stage1_text) else None,
+                            )
+                            gc.collect()
                             sm.set_state(AppState.IDLE)
                             await ws.send_json({
+                                "type": "result",
+                                "text": text,
+                                "latency": elapsed,
+                                "inserted": inserted,
+                            })
+                        except Exception as e:
+                            _cancel_record_timers()
+                            _cancel_processing_timeout()
+                            sm.set_state(AppState.ERROR)
+                            await ws.send_json({
                                 "type": "error",
-                                "message": "Recording too short. Hold the button longer.",
+                                "message": str(e),
+                            })
+                            threading.Timer(5.0, lambda: sm.set_state(AppState.IDLE) if sm.state == AppState.ERROR else None).start()
+
+                    elif action == "cancel":
+                        if sm.state == AppState.PROCESSING:
+                            _cancel_processing()
+                        else:
+                            _cancel_active_recording()
+                        await ws.send_json({"type": "status", "status": "idle"})
+
+                    elif action == "transcribe_file":
+                        file_path = data.get("path", "")
+                        p = Path(file_path)
+                        if not p.is_file():
+                            await ws.send_json({
+                                "type": "error",
+                                "message": f"File not found: {file_path}",
                             })
                             continue
-                        app_clip.set_text(text)
-                        inserted = False
-                        if _should_auto_insert():
-                            try:
-                                paste_text(text)
-                                inserted = True
-                            except Exception as e:
-                                print(f"Paste operation failed: {e}")
-                        hist.add(
-                            text,
-                            duration=audio_duration,
-                            latency=elapsed,
-                            source="dictation",
-                            raw_text=raw_text,
-                            stage1_text=stage1_text,
-                            transcriber_model=txr.model_repo,
-                            formatter_model=llm.model_repo if (llm and raw_text and stage1_text != raw_text) else None,
-                            punct_model=formatter.model_repo if (formatter and stage1_text) else None,
-                        )
-                        gc.collect()
-                        sm.set_state(AppState.IDLE)
-                        await ws.send_json({
-                            "type": "result",
-                            "text": text,
-                            "latency": elapsed,
-                            "inserted": inserted,
-                        })
-                    except Exception as e:
-                        _cancel_record_timers()
-                        _cancel_processing_timeout()
-                        sm.set_state(AppState.ERROR)
-                        await ws.send_json({
-                            "type": "error",
-                            "message": str(e),
-                        })
-                        threading.Timer(5.0, lambda: sm.set_state(AppState.IDLE) if sm.state == AppState.ERROR else None).start()
-
-                elif action == "cancel":
-                    if sm.state == AppState.PROCESSING:
-                        _cancel_processing()
-                    else:
-                        _cancel_active_recording()
-                    await ws.send_json({"type": "status", "status": "idle"})
-
-                elif action == "transcribe_file":
-                    file_path = data.get("path", "")
-                    p = Path(file_path)
-                    if not p.is_file():
-                        await ws.send_json({
-                            "type": "error",
-                            "message": f"File not found: {file_path}",
-                        })
-                        continue
-                    if p.suffix.lower() not in SUPPORTED_MEDIA_EXT:
-                        await ws.send_json({
-                            "type": "error",
-                            "message": f"Unsupported format: {p.suffix}",
-                        })
-                        continue
-                    is_video = p.suffix.lower() in SUPPORTED_VIDEO_EXT
-                    await ws.send_json({
-                        "type": "file_status",
-                        "status": "transcribing",
-                        "message": f"{'Extracting audio from' if is_video else 'Transcribing'} {p.name}...",
-                    })
-                    tmp_audio = None
-                    try:
-                        start_time = time.time()
-                        if is_video:
-                            tmp_audio = await asyncio.to_thread(_extract_audio, str(p))
+                        if p.suffix.lower() not in SUPPORTED_MEDIA_EXT:
                             await ws.send_json({
-                                "type": "file_status",
-                                "status": "transcribing",
-                                "message": f"Transcribing {p.name}...",
+                                "type": "error",
+                                "message": f"Unsupported format: {p.suffix}",
                             })
-                        transcribe_path = tmp_audio if tmp_audio else str(p)
-                        text = await asyncio.to_thread(txr.transcribe, transcribe_path)
-                        elapsed = round(time.time() - start_time, 2)
-                        app_clip.set_text(text)
-                        out_name = f"{p.stem}_{date.today().isoformat()}_transcription.txt"
-                        out_path = p.parent / out_name
-                        out_path.write_text(text, encoding="utf-8")
-                        hist.add(text, latency=elapsed, source="file")
+                            continue
+                        is_video = p.suffix.lower() in SUPPORTED_VIDEO_EXT
                         await ws.send_json({
-                            "type": "file_result",
-                            "text": text,
-                            "output_path": str(out_path),
-                            "latency": elapsed,
+                            "type": "file_status",
+                            "status": "transcribing",
+                            "message": f"{'Extracting audio from' if is_video else 'Transcribing'} {p.name}...",
                         })
-                    except Exception as e:
-                        await ws.send_json({
-                            "type": "error",
-                            "message": str(e),
-                        })
-                    finally:
-                        if tmp_audio:
-                            try:
-                                os.unlink(tmp_audio)
-                            except OSError:
-                                pass
+                        tmp_audio = None
+                        try:
+                            start_time = time.time()
+                            if is_video:
+                                tmp_audio = await asyncio.to_thread(_extract_audio, str(p))
+                                await ws.send_json({
+                                    "type": "file_status",
+                                    "status": "transcribing",
+                                    "message": f"Transcribing {p.name}...",
+                                })
+                            transcribe_path = tmp_audio if tmp_audio else str(p)
+                            text = await asyncio.to_thread(txr.transcribe, transcribe_path)
+                            elapsed = round(time.time() - start_time, 2)
+                            app_clip.set_text(text)
+                            out_name = f"{p.stem}_{date.today().isoformat()}_transcription.txt"
+                            out_path = p.parent / out_name
+                            out_path.write_text(text, encoding="utf-8")
+                            hist.add(text, latency=elapsed, source="file")
+                            await ws.send_json({
+                                "type": "file_result",
+                                "text": text,
+                                "output_path": str(out_path),
+                                "latency": elapsed,
+                            })
+                        except Exception as e:
+                            await ws.send_json({
+                                "type": "error",
+                                "message": str(e),
+                            })
+                        finally:
+                            if tmp_audio:
+                                try:
+                                    os.unlink(tmp_audio)
+                                except OSError:
+                                    pass
 
-                elif action == "status":
-                    status_data = {
-                        "type": "model_status",
-                        "ready": txr.is_ready,
-                    }
-                    if hasattr(txr, 'status'):
-                        status_data["status"] = txr.status
-                        status_data["message"] = txr.status_message
-                    await ws.send_json(status_data)
+                    elif action == "status":
+                        status_data = {
+                            "type": "model_status",
+                            "ready": txr.is_ready,
+                        }
+                        if hasattr(txr, 'status'):
+                            status_data["status"] = txr.status
+                            status_data["message"] = txr.status_message
+                        await ws.send_json(status_data)
 
+            await asyncio.gather(_push_server_messages(), _handle_commands())
         except WebSocketDisconnect:
             with _main_ws_lock:
                 _main_ws_clients.discard(ws)
             gc.collect()
+        finally:
+            # Deregister main WS sink
+            with _sinks_lock:
+                try:
+                    _main_ws_sinks.remove(_main_sink)
+                except ValueError:
+                    pass
 
     @app.websocket("/ws/bar")
     async def bar_websocket(ws: WebSocket):
@@ -1009,6 +1063,11 @@ def create_app(
         if settings:
             settings.on_hotkey_change(on_hotkey_change)
 
+        # Register this connection as a bar WS sink (device events only)
+        _bar_sink = (loop, _enqueue)
+        with _sinks_lock:
+            _bar_ws_sinks.append(_bar_sink)
+
         # Send initial hotkey display name
         if settings:
             await ws.send_json({"type": "hotkey", "display": settings.hotkey_display})
@@ -1050,7 +1109,10 @@ def create_app(
                             daemon=True,
                         ).start()
                     elif action == "cancel":
-                        _cancel_active_recording()
+                        if sm.state == AppState.PROCESSING:
+                            _cancel_processing()
+                        else:
+                            _cancel_active_recording()
                     elif action == "retry":
                         if sm.state != AppState.ERROR:
                             continue
@@ -1115,6 +1177,13 @@ def create_app(
                     settings.off_hotkey_change(on_hotkey_change)
                 elif on_hotkey_change in settings._hotkey_callbacks:
                     settings._hotkey_callbacks.remove(on_hotkey_change)
+
+            # Deregister bar WS sink
+            with _sinks_lock:
+                try:
+                    _bar_ws_sinks.remove(_bar_sink)
+                except ValueError:
+                    pass
 
     # --- ClassNote WebSocket ---
 

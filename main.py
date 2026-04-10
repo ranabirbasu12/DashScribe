@@ -32,6 +32,7 @@ from lecture_store import LectureStore
 from classnote import ClassNotePipeline
 from meeting_store import MeetingStore
 from meeting import MeetingPipeline
+from device_monitor import DeviceMonitor
 
 HOST = "127.0.0.1"
 PORT = 8765
@@ -44,6 +45,8 @@ BAR_PROCESSING_W, BAR_PROCESSING_H = 120, 42
 BAR_ERROR_W, BAR_ERROR_H = 42, 42
 BAR_ANIM_DURATION = 0.3
 BAR_ANIM_FRAME_SEC = 0.014
+# Extra vertical space above the capsule for device-change toast
+BAR_TOAST_HEADROOM = 44
 
 
 def start_server(app):
@@ -309,6 +312,122 @@ def main():
     hotkey._broadcast_error = getattr(app.state, "broadcast_error", None)
     hotkey.start()
 
+    # --- Audio device hot-switching ---
+    device_monitor = DeviceMonitor()
+
+    # Track device-loss state across callback invocations so the restore
+    # toast uses the correct wording ("X connected" vs "Input switched to X")
+    classnote_was_device_lost = False
+    meeting_was_device_lost = False
+
+    def _on_device_changed(device_name):
+        """Called by DeviceMonitor on a CoreAudio background thread."""
+        nonlocal classnote_was_device_lost, meeting_was_device_lost
+        broadcast = getattr(app.state, "broadcast_device_event", None)
+        ui_recorder = getattr(app.state, "recorder", None)
+
+        if device_name is None:
+            # No input device available — stop active streams gracefully
+            for rec in (ui_recorder, hotkey_recorder):
+                if rec is None:
+                    continue
+                try:
+                    if rec.is_recording:
+                        rec._device_lost = True
+                        if rec._stream is not None:
+                            try:
+                                rec._stream.stop()
+                            except Exception:
+                                pass
+                            try:
+                                rec._stream.close()
+                            except Exception:
+                                pass
+                            rec._stream = None
+                except Exception as e:
+                    print(f"Device lost handling error: {e}")
+
+            # ClassNote: pause pipeline if active
+            try:
+                if classnote_pipeline.is_active:
+                    classnote_pipeline.pause()
+                    classnote_was_device_lost = True
+            except Exception as e:
+                print(f"ClassNote device lost error: {e}")
+
+            # Meeting: pause pipeline if active (MeetingRecorder.pause() only
+            # stops the mic stream; ScreenCaptureKit system audio keeps flowing)
+            try:
+                if meeting_pipeline.is_active:
+                    meeting_pipeline.pause()
+                    meeting_was_device_lost = True
+            except Exception as e:
+                print(f"Meeting device lost error: {e}")
+
+            if broadcast:
+                broadcast("device_lost")
+            return
+
+        # Device present — reconnect any active recorders
+        any_was_lost = False
+        for rec in (ui_recorder, hotkey_recorder):
+            if rec is None:
+                continue
+            try:
+                if getattr(rec, "_device_lost", False):
+                    any_was_lost = True
+                    rec._device_lost = False
+                    # Top-level dictation does not auto-resume on its own —
+                    # the user must restart manually. We only clear the flag.
+                elif rec.is_recording:
+                    rec.reconnect_stream()
+            except Exception as e:
+                print(f"Device changed reconnect error: {e}")
+
+        # ClassNote: resume pipeline if it was paused by device loss,
+        # else reconnect the stream directly if still active
+        try:
+            if classnote_was_device_lost and classnote_pipeline.is_paused:
+                classnote_pipeline.resume()
+                classnote_was_device_lost = False
+                any_was_lost = True
+            else:
+                cn_rec = getattr(classnote_pipeline, "_recorder", None)
+                if cn_rec is not None and cn_rec.is_recording:
+                    cn_rec.reconnect_stream()
+        except Exception as e:
+            print(f"ClassNote reconnect error: {e}")
+
+        # Meeting: resume pipeline if it was paused by device loss,
+        # else reconnect the mic stream directly if still active
+        try:
+            if meeting_was_device_lost and meeting_pipeline.is_paused:
+                meeting_pipeline.resume()
+                meeting_was_device_lost = False
+                any_was_lost = True
+            else:
+                mt_rec = getattr(meeting_pipeline, "_recorder", None)
+                if mt_rec is not None and mt_rec.is_recording:
+                    mt_rec.reconnect_stream()
+        except Exception as e:
+            print(f"Meeting reconnect error: {e}")
+
+        if broadcast:
+            event_type = "device_restored" if any_was_lost else "device_changed"
+            broadcast(event_type, device_name)
+
+    device_monitor.on_device_changed = _on_device_changed
+    device_monitor.start()
+
+    # Ensure cleanup on app quit
+    import atexit
+    def _stop_device_monitor_on_quit():
+        try:
+            device_monitor.stop()
+        except Exception:
+            pass
+    atexit.register(_stop_device_monitor_on_quit)
+
     if not hotkey.has_active_tap:
         print(
             "Accessibility permission not granted for this build.\n"
@@ -335,10 +454,10 @@ def main():
         "",
         f"http://{HOST}:{PORT}/bar",
         width=BAR_IDLE_W,
-        height=BAR_IDLE_H,
+        height=BAR_IDLE_H + BAR_TOAST_HEADROOM,
         x=bar_x,
-        y=bar_y,
-        min_size=(80, 20),
+        y=bar_y - BAR_TOAST_HEADROOM,
+        min_size=(80, 20 + BAR_TOAST_HEADROOM),
         frameless=True,
         transparent=True,
         on_top=True,
@@ -372,8 +491,8 @@ def main():
 
         if start_w == target_w and start_h == target_h:
             x, y = get_bar_position(target_w, target_h)
-            bar_window.resize(target_w, target_h)
-            bar_window.move(x, y)
+            bar_window.resize(target_w, target_h + BAR_TOAST_HEADROOM)
+            bar_window.move(x, y - BAR_TOAST_HEADROOM)
             return
 
         steps = max(1, int(duration / BAR_ANIM_FRAME_SEC))
@@ -388,8 +507,8 @@ def main():
             w = round(start_w + (target_w - start_w) * eased)
             h = round(start_h + (target_h - start_h) * eased)
             x, y = get_bar_position(w, h)
-            bar_window.resize(w, h)
-            bar_window.move(x, y)
+            bar_window.resize(w, h + BAR_TOAST_HEADROOM)
+            bar_window.move(x, y - BAR_TOAST_HEADROOM)
 
             with bar_anim_lock:
                 bar_size["w"] = w

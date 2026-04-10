@@ -119,6 +119,49 @@ class MeetingRecorder:
             "mic_audio_path": self._mic_wav_path,
         }
 
+    def reconnect_stream(self) -> bool:
+        """Swap the mic input stream to the current OS default device.
+
+        Only applies to full mode (where a mic stream exists). System audio
+        via ScreenCaptureKit is unaffected by input device changes. No-op
+        if not currently recording or not in full mode.
+        """
+        if not self.is_recording:
+            return False
+        if self.mode != "full":
+            return False
+
+        old_stream = self._mic_stream
+        self._mic_stream = None
+        self._mic_recorder = None
+
+        if old_stream is not None:
+            try:
+                old_stream.stop()
+            except Exception:
+                pass
+            try:
+                old_stream.close()
+            except Exception:
+                pass
+
+        try:
+            new_stream = sd.InputStream(
+                samplerate=self.sample_rate,
+                channels=1,
+                dtype="float32",
+                blocksize=512,
+                callback=self._mic_callback,
+            )
+            new_stream.start()
+        except Exception as e:
+            print(f"MeetingRecorder.reconnect_stream failed: {e}")
+            return False
+
+        self._mic_stream = new_stream
+        self._mic_recorder = new_stream
+        return True
+
     def pause(self):
         """Pause recording."""
         if not self.is_recording:

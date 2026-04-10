@@ -410,3 +410,67 @@ def test_stop_raw_with_sys_capture_exception():
     mic, sys_out = rec.stop_raw()
     assert mic is not None
     assert sys_out is None
+
+
+def test_reconnect_stream_swaps_input_stream():
+    rec = AudioRecorder()
+    old_stream = MagicMock()
+    rec._stream = old_stream
+    rec.is_recording = True
+
+    with patch('recorder.sd.InputStream') as mock_stream_cls:
+        new_stream = MagicMock()
+        mock_stream_cls.return_value = new_stream
+        rec.reconnect_stream()
+
+    old_stream.stop.assert_called_once()
+    old_stream.close.assert_called_once()
+    new_stream.start.assert_called_once()
+    assert rec._stream is new_stream
+    assert rec.is_recording is True
+    assert rec._device_lost is False
+
+
+def test_reconnect_stream_when_not_recording_is_noop():
+    rec = AudioRecorder()
+    rec._stream = None
+    rec.is_recording = False
+    with patch('recorder.sd.InputStream') as mock_stream_cls:
+        rec.reconnect_stream()
+        mock_stream_cls.assert_not_called()
+
+
+def test_reconnect_stream_handles_dead_old_stream():
+    rec = AudioRecorder()
+    dead_stream = MagicMock()
+    dead_stream.stop.side_effect = Exception("PortAudio error")
+    dead_stream.close.side_effect = Exception("PortAudio error")
+    rec._stream = dead_stream
+    rec.is_recording = True
+
+    with patch('recorder.sd.InputStream') as mock_stream_cls:
+        new_stream = MagicMock()
+        mock_stream_cls.return_value = new_stream
+        # Should NOT raise despite old stream errors
+        rec.reconnect_stream()
+
+    new_stream.start.assert_called_once()
+    assert rec._stream is new_stream
+
+
+def test_reconnect_stream_failure_sets_device_lost():
+    rec = AudioRecorder()
+    rec._stream = MagicMock()
+    rec.is_recording = True
+
+    with patch('recorder.sd.InputStream', side_effect=Exception("No device")):
+        rec.reconnect_stream()
+
+    assert rec._device_lost is True
+    assert rec.is_recording is False
+    assert rec._stream is None
+
+
+def test_recorder_initializes_device_lost_false():
+    rec = AudioRecorder()
+    assert rec._device_lost is False

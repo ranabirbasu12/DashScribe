@@ -97,6 +97,32 @@
         }, 5000);
     }
 
+    // --- Device change toast ---
+    const toastEl = document.getElementById('bar-toast');
+    const toastTextEl = document.getElementById('bar-toast-text');
+    let toastTimer = null;
+
+    function showToast(message) {
+        if (!toastEl || !toastTextEl) return;
+        toastTextEl.textContent = message;
+        toastEl.classList.remove('hidden');
+        if (toastTimer) {
+            clearTimeout(toastTimer);
+        }
+        toastTimer = setTimeout(() => {
+            hideToast();
+        }, 4000);
+    }
+
+    function hideToast() {
+        if (!toastEl) return;
+        toastEl.classList.add('hidden');
+        if (toastTimer) {
+            clearTimeout(toastTimer);
+            toastTimer = null;
+        }
+    }
+
     function connect() {
         if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
             return;
@@ -114,6 +140,12 @@
                 showWarning(msg.message);
             } else if (msg.type === 'hotkey') {
                 tooltip.textContent = 'Hold ' + msg.display + ' to dictate';
+            } else if (msg.type === 'device_changed') {
+                showToast(`Input switched to ${msg.device}`);
+            } else if (msg.type === 'device_lost') {
+                showToast('No microphone found — reconnect to continue');
+            } else if (msg.type === 'device_restored') {
+                showToast(`${msg.device} connected`);
             }
         };
 
@@ -135,6 +167,10 @@
         if (warningTimeout) {
             clearTimeout(warningTimeout);
             warningTimeout = null;
+        }
+        if (toastTimer) {
+            clearTimeout(toastTimer);
+            toastTimer = null;
         }
         stopWaveformAnimation();
         if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {

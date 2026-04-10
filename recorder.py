@@ -26,6 +26,7 @@ class AudioRecorder:
         self._lock = threading.Lock()
         self.on_amplitude = None
         self.on_vad_chunk = None
+        self._device_lost = False
 
     def _audio_callback(self, indata, frames, time, status):
         if status:
@@ -164,6 +165,51 @@ class AudioRecorder:
         del chunks
 
         return mic_audio, sys_audio
+
+    def reconnect_stream(self) -> bool:
+        """Swap the input stream to the current OS default device.
+
+        Called by DeviceMonitor when the default input device changes.
+        No-op if not currently recording. Returns True on success.
+        """
+        with self._lock:
+            if not self.is_recording:
+                return False
+            old_stream = self._stream
+            self._stream = None
+
+        # Tear down the old (likely dead) stream. Swallow errors — it may
+        # already be in a broken state because its device disappeared.
+        if old_stream is not None:
+            try:
+                old_stream.stop()
+            except Exception:
+                pass
+            try:
+                old_stream.close()
+            except Exception:
+                pass
+
+        # Create a new stream on the (new) default device.
+        try:
+            new_stream = sd.InputStream(
+                samplerate=self.sample_rate,
+                channels=self.channels,
+                dtype=np.float32,
+                callback=self._audio_callback,
+            )
+            new_stream.start()
+        except Exception as e:
+            print(f"AudioRecorder.reconnect_stream failed: {e}")
+            with self._lock:
+                self._device_lost = True
+                self.is_recording = False
+            return False
+
+        with self._lock:
+            self._stream = new_stream
+            self._device_lost = False
+        return True
 
     def get_sys_audio_chunks(self) -> list | None:
         """Return reference to system audio chunk list for live AEC alignment."""

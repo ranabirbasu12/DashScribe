@@ -2147,3 +2147,84 @@ def test_audio_levels_no_monitor():
     resp = client.get("/api/meeting/audio-levels")
     assert resp.status_code == 200
     assert resp.json()["levels"] == {}
+
+
+# --- Device broadcast tests ---
+
+def test_create_app_exposes_broadcast_device_event():
+    """create_app() must attach broadcast_device_event to app.state."""
+    app = create_app()
+    assert hasattr(app.state, "broadcast_device_event")
+    assert callable(app.state.broadcast_device_event)
+
+
+def test_broadcast_device_event_invalid_type_ignored():
+    """broadcast_device_event silently ignores unknown event types."""
+    app = create_app()
+    # Should not raise
+    app.state.broadcast_device_event("unknown_event", "Built-in Microphone")
+    app.state.broadcast_device_event("", None)
+
+
+def test_broadcast_device_event_valid_types_no_clients():
+    """broadcast_device_event accepts all three valid types when no clients are connected."""
+    app = create_app()
+    fn = app.state.broadcast_device_event
+    # These must not raise even with zero sinks registered
+    fn("device_changed", "Built-in Microphone")
+    fn("device_lost")
+    fn("device_restored", "USB Audio Device")
+
+
+def test_broadcast_device_event_bar_ws_receives_message():
+    """A connected bar WS client receives device events via _broadcast_device_event."""
+    sm = AppStateManager()
+    app = create_app(state_manager=sm)
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws/bar") as ws:
+        # Drain the initial state + hotkey messages
+        initial = ws.receive_json()
+        assert initial["type"] == "state"
+
+        # Fire the broadcast from the test thread (simulates CoreAudio callback)
+        app.state.broadcast_device_event("device_changed", "Built-in Microphone")
+
+        msg = ws.receive_json()
+        assert msg["type"] == "device_changed"
+        assert msg["device"] == "Built-in Microphone"
+
+
+def test_broadcast_device_event_device_lost_omits_device_key():
+    """device_lost events must NOT include the 'device' key."""
+    sm = AppStateManager()
+    app = create_app(state_manager=sm)
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws/bar") as ws:
+        ws.receive_json()  # initial state
+
+        app.state.broadcast_device_event("device_lost")
+
+        msg = ws.receive_json()
+        assert msg["type"] == "device_lost"
+        assert "device" not in msg
+
+
+def test_broadcast_device_event_main_ws_receives_message():
+    """A connected main WS client receives device events via _broadcast_device_event."""
+    sm = AppStateManager()
+    mock_recorder = MagicMock()
+    mock_recorder.is_recording = False
+    mock_transcriber = MagicMock()
+    mock_transcriber.is_ready = True
+    app = create_app(recorder=mock_recorder, transcriber=mock_transcriber, state_manager=sm)
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws") as ws:
+        # Fire the broadcast
+        app.state.broadcast_device_event("device_restored", "USB Audio Device")
+
+        msg = ws.receive_json()
+        assert msg["type"] == "device_restored"
+        assert msg["device"] == "USB Audio Device"
