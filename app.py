@@ -1004,8 +1004,6 @@ def create_app(
 
             await asyncio.gather(_push_server_messages(), _handle_commands())
         except WebSocketDisconnect:
-            with _main_ws_lock:
-                _main_ws_clients.discard(ws)
             gc.collect()
         finally:
             # Deregister main WS sink
