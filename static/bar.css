@@ -3,7 +3,7 @@
 
 html, body {
     background: transparent;
-    overflow: hidden;
+    overflow: visible;
     user-select: none;
     -webkit-user-select: none;
     height: 100%;
@@ -238,4 +238,49 @@ html, body {
 
 .tooltip.hidden {
     opacity: 0;
+}
+
+/* --- Device change toast (detached pill above bar) --- */
+.bar-toast {
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%) translateY(4px);
+    margin-bottom: 10px;
+    background: rgba(30, 30, 30, 0.92);
+    color: #e0e0e0;
+    padding: 8px 14px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    white-space: nowrap;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    opacity: 1;
+    transition: opacity 0.3s ease, transform 0.3s ease;
+    pointer-events: none;
+    z-index: 10;
+}
+
+.bar-toast.hidden {
+    opacity: 0;
+    transform: translateX(-50%) translateY(8px);
+}
+
+.bar-toast-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #a0c4ff;
+    flex-shrink: 0;
+}
+
+.bar-toast-icon {
+    width: 12px;
+    height: 12px;
+    color: #a0c4ff;
+    flex-shrink: 0;
 }
