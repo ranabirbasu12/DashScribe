@@ -98,6 +98,45 @@ class LectureRecorder:
         self.is_recording = True
         self.is_paused = False
 
+    def reconnect_stream(self) -> bool:
+        """Swap the input stream to the current OS default device.
+
+        Called by DeviceMonitor when the default input device changes.
+        The WAV file stays open across the reconnect. No-op if not recording.
+        """
+        if not self.is_recording:
+            return False
+
+        old_stream = self._stream
+        self._stream = None
+
+        if old_stream is not None:
+            try:
+                old_stream.stop()
+            except Exception:
+                pass
+            try:
+                old_stream.close()
+            except Exception:
+                pass
+
+        try:
+            new_stream = sd.InputStream(
+                samplerate=self.sample_rate,
+                channels=1,
+                dtype="float32",
+                blocksize=512,
+                callback=self._audio_callback,
+            )
+            new_stream.start()
+        except Exception as e:
+            print(f"LectureRecorder.reconnect_stream failed: {e}")
+            self.is_recording = False
+            return False
+
+        self._stream = new_stream
+        return True
+
     @property
     def elapsed_seconds(self) -> float:
         return self._total_frames / self.sample_rate

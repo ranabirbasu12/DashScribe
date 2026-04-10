@@ -391,3 +391,39 @@ def test_recover_wav_valid_recovery(tmp_dir):
         assert wf.getnchannels() == 1
         assert wf.getsampwidth() == 2
         assert wf.getframerate() == 16000
+
+
+def test_lecture_reconnect_stream_swaps_input_stream(tmp_path):
+    from unittest.mock import patch, MagicMock
+    from lecture_recorder import LectureRecorder
+
+    rec = LectureRecorder()
+    wav_path = str(tmp_path / "lecture.wav")
+
+    with patch('lecture_recorder.sd.InputStream') as mock_stream_cls:
+        first_stream = MagicMock()
+        mock_stream_cls.return_value = first_stream
+        rec.start(wav_path)
+        assert rec.is_recording is True
+
+        second_stream = MagicMock()
+        mock_stream_cls.return_value = second_stream
+        rec.reconnect_stream()
+
+    first_stream.stop.assert_called_once()
+    first_stream.close.assert_called_once()
+    second_stream.start.assert_called_once()
+    assert rec._stream is second_stream
+    # WAV file should still be open
+    assert rec._wav_file is not None
+    rec.stop()
+
+
+def test_lecture_reconnect_stream_noop_when_not_recording(tmp_path):
+    from unittest.mock import patch
+    from lecture_recorder import LectureRecorder
+
+    rec = LectureRecorder()
+    with patch('lecture_recorder.sd.InputStream') as mock_stream_cls:
+        rec.reconnect_stream()
+        mock_stream_cls.assert_not_called()
