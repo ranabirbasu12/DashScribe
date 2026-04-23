@@ -11,6 +11,9 @@ html, body {
 
 .bar {
     --capsule-bg: rgba(30, 30, 30, 0.9);
+    --cap-h: 42px;
+    --btn-size: 24px;
+    --cap-inset: calc((var(--cap-h) - var(--btn-size)) / 2);
     display: flex;
     align-items: flex-end;
     justify-content: center;
@@ -81,7 +84,7 @@ html, body {
 /* Recording capsule */
 .bar-recording {
     position: relative;
-    padding: 0 12px;
+    padding: 0 var(--cap-inset);
     gap: 10px;
 }
 
@@ -150,7 +153,7 @@ html, body {
 
 /* Processing capsule */
 .bar-processing {
-    padding: 0 12px;
+    padding: 0 var(--cap-inset);
     gap: 10px;
 }
 
