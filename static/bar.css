@@ -24,13 +24,12 @@ html, body {
     border-radius: 0;
 }
 
-/* Shared state container behavior */
+/* Shared state container behavior (sizing handled per state below) */
 .bar-idle,
 .bar-recording,
 .bar-processing,
 .bar-error {
     position: absolute;
-    inset: 0;
     display: none;
     align-items: center;
     justify-content: center;
@@ -52,7 +51,17 @@ html, body {
     background: var(--capsule-bg);
     border-radius: 999px;
     border: 1px solid rgba(255, 255, 255, 0.12);
-    height: 100%;
+}
+
+/* Pin the three active-state capsules to the bottom cap-h region only.
+   Leaves the toast headroom above them fully transparent. */
+.bar-recording,
+.bar-processing,
+.bar-error {
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: var(--cap-h);
 }
 
 /* Idle capsule */
@@ -184,7 +193,6 @@ html, body {
     background: rgba(229, 57, 53, 0.92);
     border-radius: 999px;
     border: 1px solid rgba(255, 255, 255, 0.14);
-    height: 100%;
 }
 
 .error-flash {
