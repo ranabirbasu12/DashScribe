@@ -144,7 +144,7 @@ def test_warmup_cached_model():
     """warmup() with a cached model sets status to ready."""
     from unittest.mock import patch
     mock_backend = MagicMock()
-    mock_backend.transcribe.return_value = {"text": ""}
+    mock_backend.transcribe.return_value = {"text": "", "language": "en", "segments": []}
     t = WhisperTranscriber()
     t._mlx_whisper = mock_backend
     with patch("transcriber._model_is_cached", return_value=True):
@@ -158,7 +158,7 @@ def test_warmup_uncached_model():
     """warmup() with uncached model sets downloading status first."""
     from unittest.mock import patch
     mock_backend = MagicMock()
-    mock_backend.transcribe.return_value = {"text": ""}
+    mock_backend.transcribe.return_value = {"text": "", "language": "en", "segments": []}
     t = WhisperTranscriber()
     t._mlx_whisper = mock_backend
     with patch("transcriber._model_is_cached", return_value=False):
@@ -251,7 +251,7 @@ def test_warmup_downloading_status():
     """warmup() sets 'downloading' status when model is not cached (lines 72-73)."""
     from unittest.mock import patch
     mock_backend = MagicMock()
-    mock_backend.transcribe.return_value = {"text": ""}
+    mock_backend.transcribe.return_value = {"text": "", "language": "en", "segments": []}
     t = WhisperTranscriber()
     t._mlx_whisper = mock_backend
     statuses = []
@@ -282,7 +282,7 @@ def test_warmup_loading_status():
     """warmup() sets 'loading' status when model is cached (lines 69-70)."""
     from unittest.mock import patch
     mock_backend = MagicMock()
-    mock_backend.transcribe.return_value = {"text": ""}
+    mock_backend.transcribe.return_value = {"text": "", "language": "en", "segments": []}
     t = WhisperTranscriber()
     t._mlx_whisper = mock_backend
     with patch("transcriber._model_is_cached", return_value=True):
@@ -296,7 +296,7 @@ def test_warmup_cleans_up_temp_file():
     from unittest.mock import patch
     import os
     mock_backend = MagicMock()
-    mock_backend.transcribe.return_value = {"text": ""}
+    mock_backend.transcribe.return_value = {"text": "", "language": "en", "segments": []}
     t = WhisperTranscriber()
     t._mlx_whisper = mock_backend
     created_files = []
@@ -325,7 +325,7 @@ def test_warmup_unlink_oserror_swallowed():
     """warmup() swallows OSError when unlinking temp file (line 96)."""
     from unittest.mock import patch
     mock_backend = MagicMock()
-    mock_backend.transcribe.return_value = {"text": ""}
+    mock_backend.transcribe.return_value = {"text": "", "language": "en", "segments": []}
     t = WhisperTranscriber()
     t._mlx_whisper = mock_backend
     with patch("transcriber._model_is_cached", return_value=True), \
@@ -335,7 +335,7 @@ def test_warmup_unlink_oserror_swallowed():
 
 
 def test_transcribe_segments_returns_structured_payload():
-    """transcribe_segments() returns segments + words + language + duration."""
+    """transcribe_segments() returns segments + words + language."""
     mock_backend = MagicMock()
     mock_backend.transcribe.return_value = {
         "text": " Hello world. Goodbye.",

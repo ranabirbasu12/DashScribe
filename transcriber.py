@@ -157,7 +157,7 @@ class WhisperTranscriber:
     ) -> dict:
         """Transcribe and return the full structured payload (segments, words, language).
 
-        language="auto" or None lets Whisper detect.
+        Defaults to language="en"; pass "auto" or None to enable Whisper's language detection.
         Returns a dict with keys: language, segments (list of dicts with id, start, end,
         text, no_speech_prob, avg_logprob, words). Word entries use {text, start, end, prob}.
         """
@@ -186,7 +186,7 @@ class WhisperTranscriber:
             language="en",
             initial_prompt=initial_prompt,
         )
-        text = " ".join(s["text"] for s in result["segments"]).strip()
+        text = " ".join(s["text"] for s in result["segments"] if s["text"]).strip()
         return _clean_hallucination(text)
 
     def transcribe_array(self, audio: np.ndarray, *, initial_prompt: str | None = None) -> str:
