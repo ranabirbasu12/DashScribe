@@ -27,6 +27,9 @@ from history import TranscriptionHistory
 from internal_clipboard import InternalClipboard
 from diagnostics import MemoryTelemetry
 from version import __version__
+from file_job import FileJob, FileJobOptions, FileJobRunner
+from diarizer import Diarizer
+from exporter import write_export, FORMATS
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +92,19 @@ def create_app(
     mt_pipeline = meeting_pipeline
     mt_store = meeting_store
     audio_monitor = None
+
+    # File-job state (Phase 1: in-memory only)
+    file_jobs: dict[str, dict] = {}  # job_id -> {job, payload}
+    diarizer = Diarizer()
+
+    def _transcriber_for(engine: str):
+        # Phase 1: only Whisper turbo is real; parakeet/whisper-large arrive in Task 12.
+        return txr
+
+    file_runner = FileJobRunner(
+        transcriber_factory=_transcriber_for,
+        diarizer=diarizer,
+    )
 
     # Detect and recover crashed lectures
     if cn_store:
@@ -387,6 +403,45 @@ def create_app(
             return JSONResponse({"path": path})
         except Exception:
             return JSONResponse({"path": None})
+
+    @app.get("/api/file-job/options-defaults")
+    async def get_file_job_defaults():
+        defaults = (settings.get("file_job_defaults", {}) if settings else {}) or {}
+        merged = {**FileJobOptions().__dict__, **defaults}
+        return JSONResponse(merged)
+
+    @app.put("/api/file-job/options-defaults")
+    async def put_file_job_defaults(payload: dict):
+        if settings:
+            settings.set("file_job_defaults", payload)
+        return JSONResponse({"ok": True})
+
+    @app.get("/api/file-job/{job_id}/payload")
+    async def get_file_job_payload(job_id: str):
+        entry = file_jobs.get(job_id)
+        if not entry:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        return JSONResponse(entry["payload"])
+
+    @app.post("/api/file-job/{job_id}/export")
+    async def export_file_job(job_id: str, body: dict):
+        entry = file_jobs.get(job_id)
+        if not entry:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        fmt = body.get("format", "txt")
+        dest = body.get("dest_path")
+        if not dest or fmt not in FORMATS:
+            return JSONResponse({"error": "bad request"}, status_code=400)
+        write_export(entry["payload"], fmt, dest)
+        return JSONResponse({"path": dest})
+
+    @app.get("/api/file-job/{job_id}/audio")
+    async def get_file_job_audio(job_id: str):
+        from fastapi.responses import FileResponse
+        entry = file_jobs.get(job_id)
+        if not entry:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        return FileResponse(entry["payload"]["audio_path"])
 
     @app.get("/api/settings/hotkey")
     async def get_hotkey():
@@ -935,62 +990,57 @@ def create_app(
                             _cancel_active_recording()
                         await ws.send_json({"type": "status", "status": "idle"})
 
-                    elif action == "transcribe_file":
-                        file_path = data.get("path", "")
-                        p = Path(file_path)
-                        if not p.is_file():
-                            await ws.send_json({
-                                "type": "error",
-                                "message": f"File not found: {file_path}",
-                            })
-                            continue
-                        if p.suffix.lower() not in SUPPORTED_MEDIA_EXT:
-                            await ws.send_json({
-                                "type": "error",
-                                "message": f"Unsupported format: {p.suffix}",
-                            })
-                            continue
-                        is_video = p.suffix.lower() in SUPPORTED_VIDEO_EXT
-                        await ws.send_json({
-                            "type": "file_status",
-                            "status": "transcribing",
-                            "message": f"{'Extracting audio from' if is_video else 'Transcribing'} {p.name}...",
-                        })
-                        tmp_audio = None
+                    elif action == "start_file_job":
+                        path = data.get("path", "")
+                        opts = FileJobOptions(**(data.get("options") or {}))
+                        job = FileJob.new(source_path=path, options=opts)
+                        file_jobs[job.job_id] = {"job": job, "payload": None}
+                        await ws.send_json({"type": "file_job_started", "job_id": job.job_id})
+
+                        async def _emit(job_id, **kw):
+                            try:
+                                await ws.send_json({"type": "file_progress", "job_id": job_id, **kw})
+                            except Exception:
+                                pass
+                        loop = asyncio.get_event_loop()
+                        file_runner._on_progress = lambda jid, **kw: asyncio.run_coroutine_threadsafe(
+                            _emit(jid, **kw), loop)
                         try:
-                            start_time = time.time()
-                            if is_video:
-                                tmp_audio = await asyncio.to_thread(_extract_audio, str(p))
-                                await ws.send_json({
-                                    "type": "file_status",
-                                    "status": "transcribing",
-                                    "message": f"Transcribing {p.name}...",
-                                })
-                            transcribe_path = tmp_audio if tmp_audio else str(p)
-                            text = await asyncio.to_thread(txr.transcribe, transcribe_path)
-                            elapsed = round(time.time() - start_time, 2)
-                            app_clip.set_text(text)
-                            out_name = f"{p.stem}_{date.today().isoformat()}_transcription.txt"
-                            out_path = p.parent / out_name
-                            out_path.write_text(text, encoding="utf-8")
-                            hist.add(text, latency=elapsed, source="file")
-                            await ws.send_json({
-                                "type": "file_result",
-                                "text": text,
-                                "output_path": str(out_path),
-                                "latency": elapsed,
-                            })
+                            payload = await asyncio.to_thread(file_runner.run, job)
+                            file_jobs[job.job_id]["payload"] = payload
+                            await ws.send_json({"type": "file_job_done", "job_id": job.job_id, "payload": payload})
                         except Exception as e:
-                            await ws.send_json({
-                                "type": "error",
-                                "message": str(e),
-                            })
-                        finally:
-                            if tmp_audio:
-                                try:
-                                    os.unlink(tmp_audio)
-                                except OSError:
-                                    pass
+                            await ws.send_json({"type": "file_job_error", "job_id": job.job_id, "message": str(e)})
+
+                    elif action == "cancel_file_job":
+                        jid = data.get("job_id", "")
+                        file_runner.cancel(jid)
+                        await ws.send_json({"type": "file_job_cancelled", "job_id": jid})
+
+                    elif action == "update_speaker_label":
+                        jid = data.get("job_id", "")
+                        sid = data.get("speaker_id", "")
+                        label = data.get("label", "")
+                        entry = file_jobs.get(jid)
+                        if entry and entry["payload"]:
+                            for sp in entry["payload"]["speakers"]:
+                                if sp["id"] == sid:
+                                    sp["label"] = label
+                            await ws.send_json({"type": "speaker_label_updated", "job_id": jid,
+                                                "speaker_id": sid, "label": label})
+
+                    elif action == "save_transcript_edits":
+                        jid = data.get("job_id", "")
+                        segments = data.get("segments", [])
+                        entry = file_jobs.get(jid)
+                        if entry and entry["payload"]:
+                            entry["payload"]["segments"] = segments
+                            from pathlib import Path as _P
+                            import json as _json
+                            sidecar = _P(entry["payload"]["audio_path"]).with_suffix(".json")
+                            sidecar.write_text(_json.dumps(entry["payload"], indent=2, ensure_ascii=False),
+                                               encoding="utf-8")
+                            await ws.send_json({"type": "transcript_saved", "job_id": jid})
 
                     elif action == "status":
                         status_data = {
