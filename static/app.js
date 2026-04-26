@@ -1393,6 +1393,26 @@
         });
     }
 
+    const enhancedToggle = document.getElementById('enhanced-diarize-toggle');
+    if (enhancedToggle) {
+        fetch('/api/diarizer/enhanced/status').then(r => r.json()).then(s => {
+            enhancedToggle.checked = s.installed && s.weights_present;
+        }).catch(() => {});
+        enhancedToggle.addEventListener('change', async () => {
+            if (!enhancedToggle.checked) return;
+            if (!window.confirm('Download ~700 MB of enhanced speaker models?')) {
+                enhancedToggle.checked = false;
+                return;
+            }
+            const r = await fetch('/api/diarizer/enhanced/install', { method: 'POST' });
+            if (!r.ok) {
+                const errBody = await r.json().catch(() => ({}));
+                window.alert(errBody.error || 'Install failed');
+                enhancedToggle.checked = false;
+            }
+        });
+    }
+
     function teardown() {
         hideOnboarding();
         stopStatusPolling();

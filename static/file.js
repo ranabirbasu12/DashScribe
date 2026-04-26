@@ -31,6 +31,8 @@
             language: el("opt-language").value,
             task: el("opt-task").value,
             diarization_enabled: el("opt-diarize").checked,
+            diarization_engine: document.getElementById("enhanced-diarize-toggle")?.checked
+                ? "pyannote-community-1" : "sherpa-onnx",
             speaker_count: el("opt-speakers").value === "auto" ? "auto" : parseInt(el("opt-speakers").value, 10),
             initial_prompt: el("opt-prompt").value,
             timestamp_granularity: el("opt-ts").value,

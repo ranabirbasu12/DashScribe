@@ -106,7 +106,19 @@ def create_app(
 
     # File-job state (Phase 1: in-memory only)
     file_jobs: dict[str, dict] = {}  # job_id -> {job, payload}
-    diarizer = Diarizer()
+    sherpa_diarizer = Diarizer()
+    pyannote_diarizer_holder = {"instance": None}
+
+    def _diarizer_for(engine_name: str):
+        if engine_name == "pyannote-community-1":
+            inst = pyannote_diarizer_holder["instance"]
+            if inst is None:
+                from diarizer_pyannote import PyannoteDiarizer
+                inst = PyannoteDiarizer()
+                pyannote_diarizer_holder["instance"] = inst
+            return inst
+        return sherpa_diarizer
+
     from engine_registry import EngineRegistry
     from parakeet_transcriber import ParakeetTranscriber
     from transcriber import WhisperTranscriber as _W
@@ -121,7 +133,7 @@ def create_app(
 
     file_runner = FileJobRunner(
         transcriber_factory=_transcriber_for,
-        diarizer=diarizer,
+        diarizer=sherpa_diarizer,  # default; overridden per-job below
     )
 
     # Detect and recover crashed lectures
@@ -469,6 +481,43 @@ def create_app(
         try:
             path = await asyncio.to_thread(_download_url, url)
             return JSONResponse({"path": path})
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.get("/api/diarizer/enhanced/status")
+    async def enhanced_status():
+        from diarizer_pyannote import is_pyannote_installed, CACHE_DIR
+        installed = is_pyannote_installed()
+        weights_present = (CACHE_DIR / "speaker-diarization-community-1").exists()
+        return JSONResponse({"installed": installed, "weights_present": weights_present})
+
+    @app.post("/api/diarizer/enhanced/install")
+    async def enhanced_install():
+        import sys, subprocess
+        from diarizer_pyannote import CACHE_DIR, WEIGHTS_URL
+        # Refuse to download from the placeholder URL.
+        if "github.com/dashscribe/dashscribe" in WEIGHTS_URL:
+            return JSONResponse({
+                "error": "Enhanced diarization weights URL not yet configured. "
+                         "DashScribe needs to host the pyannote-community-1 weights "
+                         "(CC-BY-4.0 with attribution) on its own GitHub Releases first."
+            }, status_code=501)
+        target = str(Path("~/.dashscribe/pyannote_pkgs").expanduser())
+        try:
+            subprocess.run([
+                sys.executable, "-m", "pip", "install", "--target", target,
+                "pyannote.audio", "torch>=2.6,<3",
+                "--index-url", "https://download.pytorch.org/whl/cpu",
+            ], check=True, capture_output=True)
+            sys.path.insert(0, target)
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            import urllib.request, tarfile
+            tarball = CACHE_DIR / "weights.tar.bz2"
+            urllib.request.urlretrieve(WEIGHTS_URL, tarball)
+            with tarfile.open(tarball, "r:bz2") as tf:
+                tf.extractall(CACHE_DIR, filter="data")
+            tarball.unlink(missing_ok=True)
+            return JSONResponse({"ok": True})
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=500)
 
@@ -1037,6 +1086,8 @@ def create_app(
                         loop = asyncio.get_event_loop()
                         file_runner._on_progress = lambda jid, **kw: asyncio.run_coroutine_threadsafe(
                             _emit(jid, **kw), loop)
+                        # Swap diarizer based on per-job preference (sherpa-onnx default vs pyannote)
+                        file_runner._diarizer = _diarizer_for(opts.diarization_engine)
                         try:
                             payload = await asyncio.to_thread(file_runner.run, job)
                             file_jobs[job.job_id]["payload"] = payload
