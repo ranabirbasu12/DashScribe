@@ -1416,107 +1416,11 @@ def test_ws_status_action():
         assert resp["status"] == "ready"
 
 
-def test_ws_transcribe_file_not_found():
-    """WS transcribe_file with nonexistent file sends error."""
-    mock_rec = MagicMock()
-    mock_rec.is_recording = False
-    mock_txr = MagicMock()
-    mock_txr.is_ready = True
-    app = create_app(recorder=mock_rec, transcriber=mock_txr)
-    client = TestClient(app)
-    with client.websocket_connect("/ws") as ws:
-        ws.send_json({"action": "transcribe_file", "path": "/nonexistent/file.wav"})
-        resp = ws.receive_json()
-        assert resp["type"] == "error"
-        assert "not found" in resp["message"].lower()
-
-
-def test_ws_transcribe_file_unsupported_format():
-    """WS transcribe_file with unsupported format sends error."""
-    import tempfile
-    with tempfile.NamedTemporaryFile(suffix=".xyz", delete=False) as f:
-        tmp_path = f.name
-    try:
-        mock_rec = MagicMock()
-        mock_rec.is_recording = False
-        mock_txr = MagicMock()
-        mock_txr.is_ready = True
-        app = create_app(recorder=mock_rec, transcriber=mock_txr)
-        client = TestClient(app)
-        with client.websocket_connect("/ws") as ws:
-            ws.send_json({"action": "transcribe_file", "path": tmp_path})
-            resp = ws.receive_json()
-            assert resp["type"] == "error"
-            assert "unsupported" in resp["message"].lower()
-    finally:
-        os.unlink(tmp_path)
-
-
-def test_ws_transcribe_file_success():
-    """WS transcribe_file with valid file returns result."""
-    import tempfile
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-        f.write(b"fake audio data")
-        tmp_path = f.name
-    try:
-        mock_rec = MagicMock()
-        mock_rec.is_recording = False
-        mock_txr = MagicMock()
-        mock_txr.is_ready = True
-        mock_txr.transcribe.return_value = "Transcribed text from file"
-        tmp_hist = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-        db_path = tmp_hist.name
-        tmp_hist.close()
-        hist = TranscriptionHistory(db_path)
-        app = create_app(recorder=mock_rec, transcriber=mock_txr, history=hist)
-        client = TestClient(app)
-        with client.websocket_connect("/ws") as ws:
-            ws.send_json({"action": "transcribe_file", "path": tmp_path})
-            msgs = []
-            for _ in range(2):
-                msgs.append(ws.receive_json())
-            types = [m["type"] for m in msgs]
-            assert "file_status" in types
-            assert "file_result" in types
-            result = next(m for m in msgs if m["type"] == "file_result")
-            assert result["text"] == "Transcribed text from file"
-        os.unlink(db_path)
-    finally:
-        # Cleanup output file too
-        import glob
-        for f in glob.glob(tmp_path.replace(".wav", "*_transcription.txt")):
-            os.unlink(f)
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
-
-
-def test_ws_transcribe_file_exception():
-    """WS transcribe_file that fails sends error."""
-    import tempfile
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-        f.write(b"fake audio data")
-        tmp_path = f.name
-    try:
-        mock_rec = MagicMock()
-        mock_rec.is_recording = False
-        mock_txr = MagicMock()
-        mock_txr.is_ready = True
-        mock_txr.transcribe.side_effect = Exception("Transcription failed")
-        app = create_app(recorder=mock_rec, transcriber=mock_txr)
-        client = TestClient(app)
-        with client.websocket_connect("/ws") as ws:
-            ws.send_json({"action": "transcribe_file", "path": tmp_path})
-            msgs = []
-            for _ in range(2):
-                msgs.append(ws.receive_json())
-            types = [m["type"] for m in msgs]
-            assert "error" in types
-    finally:
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
-
-
 # --- WebSocket stop with no audio / short recording (line 851-857) ---
+# Note: the four test_ws_transcribe_file_* tests were removed in Task 6 along
+# with the underlying "transcribe_file" WebSocket action. The new file-job flow
+# is covered by test_get_file_job_options_defaults / test_put_file_job_options_defaults_persists
+# at the bottom of this file, plus tests/test_file_job.py for the runner pipeline.
 
 @patch("app.get_wav_duration", return_value=0.5)
 def test_ws_stop_no_audio(_mock_dur):
@@ -2228,3 +2132,50 @@ def test_broadcast_device_event_main_ws_receives_message():
         msg = ws.receive_json()
         assert msg["type"] == "device_restored"
         assert msg["device"] == "USB Audio Device"
+
+
+def test_get_file_job_options_defaults():
+    """GET /api/file-job/options-defaults returns correct default values."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        orig_path, orig_dir = config_module.CONFIG_PATH, config_module.CONFIG_DIR
+        config_module.CONFIG_PATH = os.path.join(tmpdir, "config.json")
+        config_module.CONFIG_DIR = tmpdir
+        try:
+            settings = SettingsManager()
+            app = create_app(settings=settings)
+            client = TestClient(app)
+            resp = client.get("/api/file-job/options-defaults")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["engine"] == "auto"
+            assert data["diarization_enabled"] is True
+            assert data["quality_preset"] == "balanced"
+        finally:
+            config_module.CONFIG_PATH = orig_path
+            config_module.CONFIG_DIR = orig_dir
+
+
+def test_put_file_job_options_defaults_persists():
+    """PUT /api/file-job/options-defaults persists values visible via subsequent GET."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        orig_path, orig_dir = config_module.CONFIG_PATH, config_module.CONFIG_DIR
+        config_module.CONFIG_PATH = os.path.join(tmpdir, "config.json")
+        config_module.CONFIG_DIR = tmpdir
+        try:
+            settings = SettingsManager()
+            app = create_app(settings=settings)
+            client = TestClient(app)
+            put_resp = client.put(
+                "/api/file-job/options-defaults",
+                json={"engine": "parakeet", "diarization_enabled": False},
+            )
+            assert put_resp.status_code == 200
+            assert put_resp.json()["ok"] is True
+            get_resp = client.get("/api/file-job/options-defaults")
+            assert get_resp.status_code == 200
+            data = get_resp.json()
+            assert data["engine"] == "parakeet"
+            assert data["diarization_enabled"] is False
+        finally:
+            config_module.CONFIG_PATH = orig_path
+            config_module.CONFIG_DIR = orig_dir

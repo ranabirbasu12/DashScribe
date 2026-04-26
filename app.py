@@ -27,6 +27,9 @@ from history import TranscriptionHistory
 from internal_clipboard import InternalClipboard
 from diagnostics import MemoryTelemetry
 from version import __version__
+from file_job import FileJob, FileJobOptions, FileJobRunner
+from diarizer import Diarizer
+from exporter import write_export, FORMATS
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +60,17 @@ def _extract_audio(video_path: str) -> str:
         capture_output=True, check=True,
     )
     return tmp.name
+def _download_url(url: str) -> str:
+    """Download bestaudio from a URL via yt-dlp; return local file path."""
+    import tempfile
+    tmp_dir = tempfile.mkdtemp(prefix="dashscribe_url_")
+    out_template = f"{tmp_dir}/%(id)s.%(ext)s"
+    from yt_dlp import YoutubeDL
+    with YoutubeDL({"format": "bestaudio/best", "outtmpl": out_template, "quiet": True}) as ydl:
+        info = ydl.extract_info(url, download=True)
+        return ydl.prepare_filename(info)
+
+
 WARNING_SECONDS = 540
 
 
@@ -89,6 +103,34 @@ def create_app(
     mt_pipeline = meeting_pipeline
     mt_store = meeting_store
     audio_monitor = None
+
+    # File-job state (Phase 1: in-memory only)
+    file_jobs: dict[str, dict] = {}  # job_id -> {job, payload}
+    active_runners: dict[str, FileJobRunner] = {}  # job_id -> per-job runner
+    sherpa_diarizer = Diarizer()
+    pyannote_diarizer_holder = {"instance": None}
+
+    def _diarizer_for(engine_name: str):
+        if engine_name == "pyannote-community-1":
+            inst = pyannote_diarizer_holder["instance"]
+            if inst is None:
+                from diarizer_pyannote import PyannoteDiarizer
+                inst = PyannoteDiarizer()
+                pyannote_diarizer_holder["instance"] = inst
+            return inst
+        return sherpa_diarizer
+
+    from engine_registry import EngineRegistry
+    from parakeet_transcriber import ParakeetTranscriber
+    from transcriber import WhisperTranscriber as _W
+    engines = EngineRegistry(
+        whisper_turbo=txr,
+        parakeet_factory=lambda: ParakeetTranscriber(),
+        whisper_large_factory=lambda: _W(model_repo="mlx-community/whisper-large-v3"),
+    )
+
+    def _transcriber_for(engine: str):
+        return engines.get(engine)
 
     # Detect and recover crashed lectures
     if cn_store:
@@ -387,6 +429,93 @@ def create_app(
             return JSONResponse({"path": path})
         except Exception:
             return JSONResponse({"path": None})
+
+    @app.get("/api/file-job/options-defaults")
+    async def get_file_job_defaults():
+        defaults = (settings.get("file_job_defaults", {}) if settings else {}) or {}
+        merged = {**FileJobOptions().__dict__, **defaults}
+        return JSONResponse(merged)
+
+    @app.put("/api/file-job/options-defaults")
+    async def put_file_job_defaults(payload: dict):
+        if settings:
+            settings.set("file_job_defaults", payload)
+        return JSONResponse({"ok": True})
+
+    @app.get("/api/file-job/{job_id}/payload")
+    async def get_file_job_payload(job_id: str):
+        entry = file_jobs.get(job_id)
+        if not entry:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        return JSONResponse(entry["payload"])
+
+    @app.post("/api/file-job/{job_id}/export")
+    async def export_file_job(job_id: str, body: dict):
+        entry = file_jobs.get(job_id)
+        if not entry:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        fmt = body.get("format", "txt")
+        dest = body.get("dest_path")
+        if not dest or fmt not in FORMATS:
+            return JSONResponse({"error": "bad request"}, status_code=400)
+        write_export(entry["payload"], fmt, dest)
+        return JSONResponse({"path": dest})
+
+    @app.get("/api/file-job/{job_id}/audio")
+    async def get_file_job_audio(job_id: str):
+        from fastapi.responses import FileResponse
+        entry = file_jobs.get(job_id)
+        if not entry:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        return FileResponse(entry["payload"]["audio_path"])
+
+    @app.post("/api/file-job/from-url")
+    async def from_url(payload: dict):
+        url = (payload or {}).get("url", "").strip()
+        if not url:
+            return JSONResponse({"error": "missing url"}, status_code=400)
+        try:
+            path = await asyncio.to_thread(_download_url, url)
+            return JSONResponse({"path": path})
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.get("/api/diarizer/enhanced/status")
+    async def enhanced_status():
+        from diarizer_pyannote import is_pyannote_installed, CACHE_DIR
+        installed = is_pyannote_installed()
+        weights_present = (CACHE_DIR / "speaker-diarization-community-1").exists()
+        return JSONResponse({"installed": installed, "weights_present": weights_present})
+
+    @app.post("/api/diarizer/enhanced/install")
+    async def enhanced_install():
+        import sys, subprocess
+        from diarizer_pyannote import CACHE_DIR, WEIGHTS_URL
+        # Refuse to download from the placeholder URL.
+        if "github.com/dashscribe/dashscribe" in WEIGHTS_URL:
+            return JSONResponse({
+                "error": "Enhanced diarization weights URL not yet configured. "
+                         "DashScribe needs to host the pyannote-community-1 weights "
+                         "(CC-BY-4.0 with attribution) on its own GitHub Releases first."
+            }, status_code=501)
+        target = str(Path("~/.dashscribe/pyannote_pkgs").expanduser())
+        try:
+            subprocess.run([
+                sys.executable, "-m", "pip", "install", "--target", target,
+                "pyannote.audio", "torch>=2.6,<3",
+                "--index-url", "https://download.pytorch.org/whl/cpu",
+            ], check=True, capture_output=True)
+            sys.path.insert(0, target)
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            import urllib.request, tarfile
+            tarball = CACHE_DIR / "weights.tar.bz2"
+            urllib.request.urlretrieve(WEIGHTS_URL, tarball)
+            with tarfile.open(tarball, "r:bz2") as tf:
+                tf.extractall(CACHE_DIR, filter="data")
+            tarball.unlink(missing_ok=True)
+            return JSONResponse({"ok": True})
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
 
     @app.get("/api/settings/hotkey")
     async def get_hotkey():
@@ -935,62 +1064,71 @@ def create_app(
                             _cancel_active_recording()
                         await ws.send_json({"type": "status", "status": "idle"})
 
-                    elif action == "transcribe_file":
-                        file_path = data.get("path", "")
-                        p = Path(file_path)
-                        if not p.is_file():
-                            await ws.send_json({
-                                "type": "error",
-                                "message": f"File not found: {file_path}",
-                            })
-                            continue
-                        if p.suffix.lower() not in SUPPORTED_MEDIA_EXT:
-                            await ws.send_json({
-                                "type": "error",
-                                "message": f"Unsupported format: {p.suffix}",
-                            })
-                            continue
-                        is_video = p.suffix.lower() in SUPPORTED_VIDEO_EXT
-                        await ws.send_json({
-                            "type": "file_status",
-                            "status": "transcribing",
-                            "message": f"{'Extracting audio from' if is_video else 'Transcribing'} {p.name}...",
-                        })
-                        tmp_audio = None
+                    elif action == "start_file_job":
+                        path = data.get("path", "")
+                        if path == "__sample__":
+                            from pathlib import Path as _P
+                            path = str(_P(STATIC_DIR) / "samples" / "sample-en.m4a")
+                        opts = FileJobOptions(**(data.get("options") or {}))
+                        job = FileJob.new(source_path=path, options=opts)
+                        file_jobs[job.job_id] = {"job": job, "payload": None}
+                        await ws.send_json({"type": "file_job_started", "job_id": job.job_id})
+
+                        async def _emit(job_id, **kw):
+                            try:
+                                await ws.send_json({"type": "file_progress", "job_id": job_id, **kw})
+                            except Exception:
+                                pass
+                        loop = asyncio.get_running_loop()
+
+                        # Per-job runner so simultaneous WS connections don't trample shared state.
+                        per_job_runner = FileJobRunner(
+                            transcriber_factory=_transcriber_for,
+                            diarizer=_diarizer_for(opts.diarization_engine),
+                            on_progress=lambda jid, **kw: asyncio.run_coroutine_threadsafe(
+                                _emit(jid, **kw), loop),
+                        )
+                        active_runners[job.job_id] = per_job_runner
                         try:
-                            start_time = time.time()
-                            if is_video:
-                                tmp_audio = await asyncio.to_thread(_extract_audio, str(p))
-                                await ws.send_json({
-                                    "type": "file_status",
-                                    "status": "transcribing",
-                                    "message": f"Transcribing {p.name}...",
-                                })
-                            transcribe_path = tmp_audio if tmp_audio else str(p)
-                            text = await asyncio.to_thread(txr.transcribe, transcribe_path)
-                            elapsed = round(time.time() - start_time, 2)
-                            app_clip.set_text(text)
-                            out_name = f"{p.stem}_{date.today().isoformat()}_transcription.txt"
-                            out_path = p.parent / out_name
-                            out_path.write_text(text, encoding="utf-8")
-                            hist.add(text, latency=elapsed, source="file")
-                            await ws.send_json({
-                                "type": "file_result",
-                                "text": text,
-                                "output_path": str(out_path),
-                                "latency": elapsed,
-                            })
+                            payload = await asyncio.to_thread(per_job_runner.run, job)
+                            file_jobs[job.job_id]["payload"] = payload
+                            await ws.send_json({"type": "file_job_done", "job_id": job.job_id, "payload": payload})
                         except Exception as e:
-                            await ws.send_json({
-                                "type": "error",
-                                "message": str(e),
-                            })
+                            await ws.send_json({"type": "file_job_error", "job_id": job.job_id, "message": str(e)})
                         finally:
-                            if tmp_audio:
-                                try:
-                                    os.unlink(tmp_audio)
-                                except OSError:
-                                    pass
+                            active_runners.pop(job.job_id, None)
+
+                    elif action == "cancel_file_job":
+                        jid = data.get("job_id", "")
+                        runner = active_runners.get(jid)
+                        if runner:
+                            runner.cancel(jid)
+                        await ws.send_json({"type": "file_job_cancelled", "job_id": jid})
+
+                    elif action == "update_speaker_label":
+                        jid = data.get("job_id", "")
+                        sid = data.get("speaker_id", "")
+                        label = data.get("label", "")
+                        entry = file_jobs.get(jid)
+                        if entry and entry["payload"]:
+                            for sp in entry["payload"]["speakers"]:
+                                if sp["id"] == sid:
+                                    sp["label"] = label
+                            await ws.send_json({"type": "speaker_label_updated", "job_id": jid,
+                                                "speaker_id": sid, "label": label})
+
+                    elif action == "save_transcript_edits":
+                        jid = data.get("job_id", "")
+                        segments = data.get("segments", [])
+                        entry = file_jobs.get(jid)
+                        if entry and entry["payload"]:
+                            entry["payload"]["segments"] = segments
+                            from pathlib import Path as _P
+                            import json as _json
+                            sidecar = _P(entry["payload"]["audio_path"]).with_suffix(".json")
+                            sidecar.write_text(_json.dumps(entry["payload"], indent=2, ensure_ascii=False),
+                                               encoding="utf-8")
+                            await ws.send_json({"type": "transcript_saved", "job_id": jid})
 
                     elif action == "status":
                         status_data = {
