@@ -13,7 +13,14 @@ def test_transcriber_initializes_with_model_name():
 
 def test_transcribe_returns_text():
     mock_backend = MagicMock()
-    mock_backend.transcribe.return_value = {"text": " Hello world."}
+    mock_backend.transcribe.return_value = {
+        "text": " Hello world.",
+        "language": "en",
+        "segments": [
+            {"id": 0, "start": 0.0, "end": 1.0, "text": " Hello world.",
+             "no_speech_prob": 0.01, "avg_logprob": -0.2, "words": []},
+        ],
+    }
     t = WhisperTranscriber()
     t._mlx_whisper = mock_backend
     t.is_ready = True
@@ -28,7 +35,14 @@ def test_transcribe_returns_text():
 
 def test_transcribe_strips_whitespace():
     mock_backend = MagicMock()
-    mock_backend.transcribe.return_value = {"text": "  Some text  "}
+    mock_backend.transcribe.return_value = {
+        "text": "  Some text  ",
+        "language": "en",
+        "segments": [
+            {"id": 0, "start": 0.0, "end": 1.0, "text": "  Some text  ",
+             "no_speech_prob": 0.01, "avg_logprob": -0.2, "words": []},
+        ],
+    }
     t = WhisperTranscriber()
     t._mlx_whisper = mock_backend
     t.is_ready = True
@@ -130,7 +144,7 @@ def test_warmup_cached_model():
     """warmup() with a cached model sets status to ready."""
     from unittest.mock import patch
     mock_backend = MagicMock()
-    mock_backend.transcribe.return_value = {"text": ""}
+    mock_backend.transcribe.return_value = {"text": "", "language": "en", "segments": []}
     t = WhisperTranscriber()
     t._mlx_whisper = mock_backend
     with patch("transcriber._model_is_cached", return_value=True):
@@ -144,7 +158,7 @@ def test_warmup_uncached_model():
     """warmup() with uncached model sets downloading status first."""
     from unittest.mock import patch
     mock_backend = MagicMock()
-    mock_backend.transcribe.return_value = {"text": ""}
+    mock_backend.transcribe.return_value = {"text": "", "language": "en", "segments": []}
     t = WhisperTranscriber()
     t._mlx_whisper = mock_backend
     with patch("transcriber._model_is_cached", return_value=False):
@@ -237,7 +251,7 @@ def test_warmup_downloading_status():
     """warmup() sets 'downloading' status when model is not cached (lines 72-73)."""
     from unittest.mock import patch
     mock_backend = MagicMock()
-    mock_backend.transcribe.return_value = {"text": ""}
+    mock_backend.transcribe.return_value = {"text": "", "language": "en", "segments": []}
     t = WhisperTranscriber()
     t._mlx_whisper = mock_backend
     statuses = []
@@ -268,7 +282,7 @@ def test_warmup_loading_status():
     """warmup() sets 'loading' status when model is cached (lines 69-70)."""
     from unittest.mock import patch
     mock_backend = MagicMock()
-    mock_backend.transcribe.return_value = {"text": ""}
+    mock_backend.transcribe.return_value = {"text": "", "language": "en", "segments": []}
     t = WhisperTranscriber()
     t._mlx_whisper = mock_backend
     with patch("transcriber._model_is_cached", return_value=True):
@@ -282,7 +296,7 @@ def test_warmup_cleans_up_temp_file():
     from unittest.mock import patch
     import os
     mock_backend = MagicMock()
-    mock_backend.transcribe.return_value = {"text": ""}
+    mock_backend.transcribe.return_value = {"text": "", "language": "en", "segments": []}
     t = WhisperTranscriber()
     t._mlx_whisper = mock_backend
     created_files = []
@@ -311,10 +325,100 @@ def test_warmup_unlink_oserror_swallowed():
     """warmup() swallows OSError when unlinking temp file (line 96)."""
     from unittest.mock import patch
     mock_backend = MagicMock()
-    mock_backend.transcribe.return_value = {"text": ""}
+    mock_backend.transcribe.return_value = {"text": "", "language": "en", "segments": []}
     t = WhisperTranscriber()
     t._mlx_whisper = mock_backend
     with patch("transcriber._model_is_cached", return_value=True), \
          patch("transcriber.os.unlink", side_effect=OSError("permission denied")):
         t.warmup()  # Should not raise
     assert t.is_ready is True
+
+
+def test_transcribe_segments_returns_structured_payload():
+    """transcribe_segments() returns segments + words + language."""
+    mock_backend = MagicMock()
+    mock_backend.transcribe.return_value = {
+        "text": " Hello world. Goodbye.",
+        "language": "en",
+        "segments": [
+            {
+                "id": 0, "start": 0.0, "end": 1.2, "text": " Hello world.",
+                "no_speech_prob": 0.01, "avg_logprob": -0.2,
+                "words": [
+                    {"word": " Hello", "start": 0.0, "end": 0.5, "probability": 0.99},
+                    {"word": " world.", "start": 0.5, "end": 1.2, "probability": 0.97},
+                ],
+            },
+            {
+                "id": 1, "start": 1.5, "end": 2.4, "text": " Goodbye.",
+                "no_speech_prob": 0.02, "avg_logprob": -0.3,
+                "words": [
+                    {"word": " Goodbye.", "start": 1.5, "end": 2.4, "probability": 0.95},
+                ],
+            },
+        ],
+    }
+    t = WhisperTranscriber()
+    t._mlx_whisper = mock_backend
+    t.is_ready = True
+    result = t.transcribe_segments("/tmp/test.wav", word_timestamps=True)
+    assert result["language"] == "en"
+    assert len(result["segments"]) == 2
+    assert result["segments"][0]["text"] == "Hello world."
+    assert result["segments"][0]["start"] == 0.0
+    assert result["segments"][0]["end"] == 1.2
+    assert len(result["segments"][0]["words"]) == 2
+    assert result["segments"][0]["words"][0]["text"] == "Hello"
+    assert result["segments"][0]["words"][0]["start"] == 0.0
+    assert result["segments"][0]["words"][0]["prob"] == 0.99
+    call_kwargs = mock_backend.transcribe.call_args[1]
+    assert call_kwargs["word_timestamps"] is True
+
+
+def test_transcribe_segments_respects_language_param():
+    mock_backend = MagicMock()
+    mock_backend.transcribe.return_value = {"text": "", "language": "es", "segments": []}
+    t = WhisperTranscriber()
+    t._mlx_whisper = mock_backend
+    t.is_ready = True
+    t.transcribe_segments("/tmp/test.wav", language="es")
+    assert mock_backend.transcribe.call_args[1]["language"] == "es"
+
+
+def test_transcribe_segments_auto_language_passes_none():
+    mock_backend = MagicMock()
+    mock_backend.transcribe.return_value = {"text": "", "language": "en", "segments": []}
+    t = WhisperTranscriber()
+    t._mlx_whisper = mock_backend
+    t.is_ready = True
+    t.transcribe_segments("/tmp/test.wav", language="auto")
+    assert mock_backend.transcribe.call_args[1]["language"] is None
+
+
+def test_transcribe_segments_translate_task():
+    mock_backend = MagicMock()
+    mock_backend.transcribe.return_value = {"text": "", "language": "en", "segments": []}
+    t = WhisperTranscriber()
+    t._mlx_whisper = mock_backend
+    t.is_ready = True
+    t.transcribe_segments("/tmp/test.wav", task="translate")
+    assert mock_backend.transcribe.call_args[1]["task"] == "translate"
+
+
+def test_transcribe_uses_segments_internally():
+    """The legacy transcribe() method joins segment texts to preserve API."""
+    mock_backend = MagicMock()
+    mock_backend.transcribe.return_value = {
+        "text": " Hello world. Goodbye.",
+        "language": "en",
+        "segments": [
+            {"id": 0, "start": 0.0, "end": 1.2, "text": " Hello world.",
+             "no_speech_prob": 0.01, "avg_logprob": -0.2, "words": []},
+            {"id": 1, "start": 1.5, "end": 2.4, "text": " Goodbye.",
+             "no_speech_prob": 0.02, "avg_logprob": -0.3, "words": []},
+        ],
+    }
+    t = WhisperTranscriber()
+    t._mlx_whisper = mock_backend
+    t.is_ready = True
+    assert t.transcribe("/tmp/test.wav") == "Hello world. Goodbye."

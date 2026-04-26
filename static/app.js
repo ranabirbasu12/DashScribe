@@ -424,12 +424,44 @@
                 clearTimeout(reconnectTimer);
                 reconnectTimer = null;
             }
+            window.__appWebSocket = ws;
+            if (window.__fileMode && typeof window.__fileMode.setWs === "function") {
+                window.__fileMode.setWs(ws);
+            }
             pollStatus();
             startStatusPolling();
         };
 
         ws.onmessage = (event) => {
             const msg = JSON.parse(event.data);
+
+            // Route file-mode messages to file.js
+            if (msg.type && msg.type.indexOf("file_") === 0) {
+                const fm = window.__fileMode;
+                if (!fm) return;
+                if (msg.type === "file_job_started") {
+                    fm.setJob({ job_id: msg.job_id });
+                    fm.showWorking();
+                    return;
+                }
+                if (msg.type === "file_progress") {
+                    fm.updateProgress(msg);
+                    return;
+                }
+                if (msg.type === "file_job_cancelled") {
+                    fm.setState("empty");
+                    return;
+                }
+                if (msg.type === "file_job_done") {
+                    fm.showResult(msg.payload);
+                    return;
+                }
+                if (msg.type === "file_job_error") {
+                    window.alert(msg.message || "Transcription failed");
+                    fm.setState("empty");
+                    return;
+                }
+            }
 
             if (msg.type === 'status') {
                 if (msg.status === 'recording') {
@@ -460,29 +492,9 @@
                 if (sessionArea) sessionArea.classList.remove('recording');
                 micLabel.textContent = 'Hold to Record';
                 isRecording = false;
-                if (fileTranscribing) {
-                    fileTranscribing = false;
-                    transcribeBtn.disabled = !filePathInput.value.trim() || !modelReady;
-                    fileProgress.classList.add('hidden');
-                } else {
-                    showToast(msg.message || 'Error');
-                }
+                showToast(msg.message || 'Error');
             } else if (msg.type === 'model_status') {
                 updateModelState(msg);
-            } else if (msg.type === 'file_status') {
-                fileTranscribing = true;
-                transcribeBtn.disabled = true;
-                fileResult.classList.add('hidden');
-                fileProgress.classList.remove('hidden');
-                fileProgressMsg.textContent = msg.message || 'Transcribing file...';
-            } else if (msg.type === 'file_result') {
-                fileTranscribing = false;
-                transcribeBtn.disabled = !filePathInput.value.trim() || !modelReady;
-                fileProgress.classList.add('hidden');
-                fileResult.classList.remove('hidden');
-                fileResultText.textContent = 'Transcription saved (' + msg.latency + 's)';
-                fileOutputPath.textContent = msg.output_path;
-                loadHistory(false);
             }
         };
 
@@ -537,36 +549,6 @@
 
     micBtn.addEventListener('mouseleave', (e) => {
         stopRecording();
-    });
-
-    // --- File Transcription ---
-    const filePathInput = document.getElementById('file-path');
-    const browseBtn = document.getElementById('browse-btn');
-    const transcribeBtn = document.getElementById('transcribe-btn');
-    const fileProgress = document.getElementById('file-progress');
-    const fileProgressMsg = document.getElementById('file-progress-msg');
-    const fileResult = document.getElementById('file-result');
-    const fileResultText = document.getElementById('file-result-text');
-    const fileOutputPath = document.getElementById('file-output-path');
-    let fileTranscribing = false;
-
-    filePathInput.addEventListener('input', () => {
-        transcribeBtn.disabled = !filePathInput.value.trim() || !modelReady || fileTranscribing;
-    });
-
-    browseBtn.addEventListener('click', async () => {
-        const resp = await fetch('/api/browse-file');
-        const data = await resp.json();
-        if (data.path) {
-            filePathInput.value = data.path;
-            transcribeBtn.disabled = !modelReady || fileTranscribing;
-        }
-    });
-
-    transcribeBtn.addEventListener('click', () => {
-        if (!ws || ws.readyState !== WebSocket.OPEN) return;
-        if (!filePathInput.value.trim() || fileTranscribing) return;
-        ws.send(JSON.stringify({ action: 'transcribe_file', path: filePathInput.value.trim() }));
     });
 
     // --- History ---
@@ -1362,6 +1344,26 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ auto_check: autoUpdateToggle.checked }),
             });
+        });
+    }
+
+    const enhancedToggle = document.getElementById('enhanced-diarize-toggle');
+    if (enhancedToggle) {
+        fetch('/api/diarizer/enhanced/status').then(r => r.json()).then(s => {
+            enhancedToggle.checked = s.installed && s.weights_present;
+        }).catch(() => {});
+        enhancedToggle.addEventListener('change', async () => {
+            if (!enhancedToggle.checked) return;
+            if (!window.confirm('Download ~700 MB of enhanced speaker models?')) {
+                enhancedToggle.checked = false;
+                return;
+            }
+            const r = await fetch('/api/diarizer/enhanced/install', { method: 'POST' });
+            if (!r.ok) {
+                const errBody = await r.json().catch(() => ({}));
+                window.alert(errBody.error || 'Install failed');
+                enhancedToggle.checked = false;
+            }
         });
     }
 
