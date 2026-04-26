@@ -19,3 +19,4 @@ sherpa-onnx>=1.10.30
 soundfile
 python-docx>=1.1.2
 parakeet-mlx>=0.5.1
+yt-dlp>=2025.10.0

@@ -60,6 +60,17 @@ def _extract_audio(video_path: str) -> str:
         capture_output=True, check=True,
     )
     return tmp.name
+def _download_url(url: str) -> str:
+    """Download bestaudio from a URL via yt-dlp; return local file path."""
+    import tempfile
+    tmp_dir = tempfile.mkdtemp(prefix="dashscribe_url_")
+    out_template = f"{tmp_dir}/%(id)s.%(ext)s"
+    from yt_dlp import YoutubeDL
+    with YoutubeDL({"format": "bestaudio/best", "outtmpl": out_template, "quiet": True}) as ydl:
+        info = ydl.extract_info(url, download=True)
+        return ydl.prepare_filename(info)
+
+
 WARNING_SECONDS = 540
 
 
@@ -449,6 +460,17 @@ def create_app(
         if not entry:
             return JSONResponse({"error": "not found"}, status_code=404)
         return FileResponse(entry["payload"]["audio_path"])
+
+    @app.post("/api/file-job/from-url")
+    async def from_url(payload: dict):
+        url = (payload or {}).get("url", "").strip()
+        if not url:
+            return JSONResponse({"error": "missing url"}, status_code=400)
+        try:
+            path = await asyncio.to_thread(_download_url, url)
+            return JSONResponse({"path": path})
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
 
     @app.get("/api/settings/hotkey")
     async def get_hotkey():
