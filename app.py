@@ -96,10 +96,17 @@ def create_app(
     # File-job state (Phase 1: in-memory only)
     file_jobs: dict[str, dict] = {}  # job_id -> {job, payload}
     diarizer = Diarizer()
+    from engine_registry import EngineRegistry
+    from parakeet_transcriber import ParakeetTranscriber
+    from transcriber import WhisperTranscriber as _W
+    engines = EngineRegistry(
+        whisper_turbo=txr,
+        parakeet_factory=lambda: ParakeetTranscriber(),
+        whisper_large_factory=lambda: _W(model_repo="mlx-community/whisper-large-v3"),
+    )
 
     def _transcriber_for(engine: str):
-        # Phase 1: only Whisper turbo is real; parakeet/whisper-large arrive in Task 12.
-        return txr
+        return engines.get(engine)
 
     file_runner = FileJobRunner(
         transcriber_factory=_transcriber_for,
