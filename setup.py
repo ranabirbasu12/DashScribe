@@ -32,6 +32,7 @@ DATA_FILES = [
         'static/index.html',
         'static/style.css',
         'static/app.js',
+        'static/file.js',
         'static/bar.html',
         'static/bar.css',
         'static/bar.js',
@@ -48,6 +49,7 @@ OPTIONS = {
         'app', 'recorder', 'transcriber', 'clipboard', 'hotkey',
         'state', 'history', 'config', 'internal_clipboard', 'system_audio', 'aec',
         'vad', 'pipeline', 'permissions', 'version', 'updater', 'llm', 'formatter', 'context',
+        'diarizer_pyannote', 'parakeet_transcriber',
         # PyObjC frameworks
         'objc', 'Quartz', 'AppKit', 'Foundation', 'WebKit',
         'CoreMedia', 'ScreenCaptureKit', 'PyObjCTools', 'AVFoundation',

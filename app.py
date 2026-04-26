@@ -106,6 +106,7 @@ def create_app(
 
     # File-job state (Phase 1: in-memory only)
     file_jobs: dict[str, dict] = {}  # job_id -> {job, payload}
+    active_runners: dict[str, FileJobRunner] = {}  # job_id -> per-job runner
     sherpa_diarizer = Diarizer()
     pyannote_diarizer_holder = {"instance": None}
 
@@ -130,11 +131,6 @@ def create_app(
 
     def _transcriber_for(engine: str):
         return engines.get(engine)
-
-    file_runner = FileJobRunner(
-        transcriber_factory=_transcriber_for,
-        diarizer=sherpa_diarizer,  # default; overridden per-job below
-    )
 
     # Detect and recover crashed lectures
     if cn_store:
@@ -1083,21 +1079,30 @@ def create_app(
                                 await ws.send_json({"type": "file_progress", "job_id": job_id, **kw})
                             except Exception:
                                 pass
-                        loop = asyncio.get_event_loop()
-                        file_runner._on_progress = lambda jid, **kw: asyncio.run_coroutine_threadsafe(
-                            _emit(jid, **kw), loop)
-                        # Swap diarizer based on per-job preference (sherpa-onnx default vs pyannote)
-                        file_runner._diarizer = _diarizer_for(opts.diarization_engine)
+                        loop = asyncio.get_running_loop()
+
+                        # Per-job runner so simultaneous WS connections don't trample shared state.
+                        per_job_runner = FileJobRunner(
+                            transcriber_factory=_transcriber_for,
+                            diarizer=_diarizer_for(opts.diarization_engine),
+                            on_progress=lambda jid, **kw: asyncio.run_coroutine_threadsafe(
+                                _emit(jid, **kw), loop),
+                        )
+                        active_runners[job.job_id] = per_job_runner
                         try:
-                            payload = await asyncio.to_thread(file_runner.run, job)
+                            payload = await asyncio.to_thread(per_job_runner.run, job)
                             file_jobs[job.job_id]["payload"] = payload
                             await ws.send_json({"type": "file_job_done", "job_id": job.job_id, "payload": payload})
                         except Exception as e:
                             await ws.send_json({"type": "file_job_error", "job_id": job.job_id, "message": str(e)})
+                        finally:
+                            active_runners.pop(job.job_id, None)
 
                     elif action == "cancel_file_job":
                         jid = data.get("job_id", "")
-                        file_runner.cancel(jid)
+                        runner = active_runners.get(jid)
+                        if runner:
+                            runner.cancel(jid)
                         await ws.send_json({"type": "file_job_cancelled", "job_id": jid})
 
                     elif action == "update_speaker_label":

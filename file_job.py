@@ -163,3 +163,11 @@ class FileJobRunner:
         finally:
             if tmp_audio:
                 Path(tmp_audio).unlink(missing_ok=True)
+            # Clean up yt-dlp temp directories (sources downloaded by /api/file-job/from-url)
+            src_path = Path(job.source_path)
+            try:
+                if src_path.parent.name.startswith("dashscribe_url_") and src_path.parent.parent == Path(tempfile.gettempdir()):
+                    import shutil
+                    shutil.rmtree(src_path.parent, ignore_errors=True)
+            except Exception:
+                pass
