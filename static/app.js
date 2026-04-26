@@ -424,12 +424,40 @@
                 clearTimeout(reconnectTimer);
                 reconnectTimer = null;
             }
+            window.__appWebSocket = ws;
+            if (window.__fileMode && typeof window.__fileMode.setWs === "function") {
+                window.__fileMode.setWs(ws);
+            }
             pollStatus();
             startStatusPolling();
         };
 
         ws.onmessage = (event) => {
             const msg = JSON.parse(event.data);
+
+            // Route file-mode messages to file.js
+            if (msg.type && msg.type.indexOf("file_") === 0) {
+                const fm = window.__fileMode;
+                if (!fm) return;
+                if (msg.type === "file_job_started") {
+                    fm.setJob({ job_id: msg.job_id });
+                    fm.showWorking();
+                    return;
+                }
+                if (msg.type === "file_progress") {
+                    fm.updateProgress(msg);
+                    return;
+                }
+                if (msg.type === "file_job_done") {
+                    fm.showResult(msg.payload);
+                    return;
+                }
+                if (msg.type === "file_job_error") {
+                    window.alert(msg.message || "Transcription failed");
+                    fm.setState("empty");
+                    return;
+                }
+            }
 
             if (msg.type === 'status') {
                 if (msg.status === 'recording') {
