@@ -47,6 +47,33 @@ def _clean_hallucination(text: str) -> str:
     return cleaned.strip()
 
 
+def _normalize_whisper_result(raw: dict) -> dict:
+    """Convert mlx-whisper output to our unified shape."""
+    segments_out = []
+    for seg in raw.get("segments", []):
+        words_out = []
+        for w in seg.get("words", []) or []:
+            words_out.append({
+                "text": (w.get("word") or "").strip(),
+                "start": float(w.get("start", 0.0)),
+                "end": float(w.get("end", 0.0)),
+                "prob": float(w.get("probability", 1.0)),
+            })
+        segments_out.append({
+            "id": int(seg.get("id", len(segments_out))),
+            "start": float(seg.get("start", 0.0)),
+            "end": float(seg.get("end", 0.0)),
+            "text": (seg.get("text") or "").strip(),
+            "no_speech_prob": float(seg.get("no_speech_prob", 0.0)),
+            "avg_logprob": float(seg.get("avg_logprob", 0.0)),
+            "words": words_out,
+        })
+    return {
+        "language": raw.get("language", "en"),
+        "segments": segments_out,
+    }
+
+
 def _model_is_cached(model_repo: str) -> bool:
     """Check if the model is already in the HuggingFace cache."""
     cache_dir = os.path.expanduser("~/.cache/huggingface/hub")
@@ -116,19 +143,51 @@ class WhisperTranscriber:
             parts.append(initial_prompt)
         return " ".join(parts)
 
-    def transcribe(self, audio_path: str, *, initial_prompt: str | None = None) -> str:
+    def transcribe_segments(
+        self,
+        audio_path: str,
+        *,
+        language: str | None = "en",
+        task: str = "transcribe",
+        initial_prompt: str | None = None,
+        word_timestamps: bool = False,
+        temperature: float = 0.0,
+        beam_size: int | None = None,
+        condition_on_previous_text: bool = False,
+    ) -> dict:
+        """Transcribe and return the full structured payload (segments, words, language).
+
+        language="auto" or None lets Whisper detect.
+        Returns a dict with keys: language, segments (list of dicts with id, start, end,
+        text, no_speech_prob, avg_logprob, words). Word entries use {text, start, end, prob}.
+        """
         with self._lock:
             prompt = self._build_prompt(initial_prompt)
-            result = self._backend().transcribe(
-                audio_path,
-                path_or_hf_repo=self.model_repo,
-                language="en",
-                condition_on_previous_text=False,
-                initial_prompt=prompt,
-            )
+            lang = None if language in ("auto", None) else language
+            kwargs = {
+                "path_or_hf_repo": self.model_repo,
+                "language": lang,
+                "task": task,
+                "condition_on_previous_text": condition_on_previous_text,
+                "initial_prompt": prompt,
+                "word_timestamps": word_timestamps,
+                "temperature": temperature,
+            }
+            if beam_size is not None:
+                kwargs["beam_size"] = beam_size
+            result = self._backend().transcribe(audio_path, **kwargs)
             self.is_ready = True
             mx.clear_cache()
-            return _clean_hallucination(result["text"].strip())
+            return _normalize_whisper_result(result)
+
+    def transcribe(self, audio_path: str, *, initial_prompt: str | None = None) -> str:
+        result = self.transcribe_segments(
+            audio_path,
+            language="en",
+            initial_prompt=initial_prompt,
+        )
+        text = " ".join(s["text"] for s in result["segments"]).strip()
+        return _clean_hallucination(text)
 
     def transcribe_array(self, audio: np.ndarray, *, initial_prompt: str | None = None) -> str:
         """Transcribe a numpy float32 audio array directly (no WAV file).
