@@ -99,6 +99,12 @@ OPTIONS = {
         # PyObjC (mlx and PyObjCTools are namespace packages — handled separately)
         'objc', 'Quartz', 'AppKit', 'Foundation', 'WebKit',
         'CoreMedia', 'CoreFoundation', 'ScreenCaptureKit', 'AVFoundation',
+        # File transcription feature deps (native binaries — must not be zipped)
+        'sherpa_onnx',
+        'parakeet_mlx',
+        'yt_dlp',
+        'docx',
+        'soundfile',
     ],
     'excludes': [
         # torch is 490MB+ and only referenced by mlx_whisper/torch_whisper.py
