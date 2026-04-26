@@ -1021,6 +1021,9 @@ def create_app(
 
                     elif action == "start_file_job":
                         path = data.get("path", "")
+                        if path == "__sample__":
+                            from pathlib import Path as _P
+                            path = str(_P(STATIC_DIR) / "samples" / "sample-en.m4a")
                         opts = FileJobOptions(**(data.get("options") or {}))
                         job = FileJob.new(source_path=path, options=opts)
                         file_jobs[job.job_id] = {"job": job, "payload": None}
