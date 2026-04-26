@@ -169,36 +169,141 @@
                 <div id="file-mode" class="page">
                     <div class="page-header">
                         <h1 class="page-title">Transcribe File</h1>
+                        <div class="page-header-actions">
+                            <button id="file-sidebar-toggle" class="btn-ghost" title="Toggle options (Cmd+0)">⚙</button>
+                        </div>
                     </div>
-                    <div class="page-content">
-                        <div class="page-hero page-hero-file">
-                            <div class="page-hero-content">
-                                <h3>Turn any audio or video into text</h3>
-                                <p>Drop a recording, podcast, video, or voice memo — DashScribe transcribes it locally in seconds. No upload, no cloud.</p>
-                                <div class="page-hero-pills">
-                                    <span class="hero-pill">Meetings</span>
-                                    <span class="hero-pill">Voice memos</span>
-                                    <span class="hero-pill">Podcasts</span>
-                                    <span class="hero-pill">Interviews</span>
-                                    <span class="hero-pill">Videos</span>
+                    <div class="page-content file-layout">
+                        <div class="file-main">
+                            <!-- Empty state -->
+                            <div id="file-empty" class="file-state file-empty">
+                                <div id="file-dropzone" class="file-dropzone">
+                                    <div class="file-dropzone-icon">⤓</div>
+                                    <h3>Drop an audio or video file here</h3>
+                                    <div class="file-dropzone-actions">
+                                        <button id="file-browse-btn" class="btn-secondary">Browse…</button>
+                                        <span class="file-dropzone-or">or paste a URL</span>
+                                    </div>
+                                    <input id="file-url" type="text" class="file-url-input"
+                                           placeholder="https://www.youtube.com/watch?v=…" />
+                                    <button id="file-sample-btn" class="link-button">Try a sample recording</button>
+                                    <p class="file-dropzone-hint">
+                                        Supports MP3, WAV, M4A, MP4, MOV, MKV, and more — transcribed
+                                        locally on your Mac. Nothing leaves the device.
+                                    </p>
+                                </div>
+                            </div>
+
+                            <!-- Transcribing state -->
+                            <div id="file-transcribing" class="file-state file-transcribing hidden">
+                                <div class="file-progress-card">
+                                    <div class="file-stage-list" id="file-stage-list"></div>
+                                    <div class="progress-bar-inline">
+                                        <div id="file-progress-fill" class="progress-fill-inline" style="width: 0%"></div>
+                                    </div>
+                                    <p id="file-progress-message" class="file-progress-msg"></p>
+                                    <button id="file-cancel-btn" class="btn-secondary">Cancel</button>
+                                </div>
+                            </div>
+
+                            <!-- Result state -->
+                            <div id="file-result-view" class="file-state file-result-view hidden">
+                                <div class="file-result-header">
+                                    <span id="file-result-filename" class="file-result-filename"></span>
+                                    <span id="file-result-meta" class="file-result-meta"></span>
+                                    <button id="file-copy-all" class="btn-ghost" title="Copy all text">📋</button>
+                                </div>
+                                <div id="file-transcript" class="file-transcript"></div>
+                                <div class="file-audio-player">
+                                    <audio id="file-audio" controls preload="metadata"></audio>
                                 </div>
                             </div>
                         </div>
-                        <div class="file-input-row">
-                            <input id="file-path" type="text" class="file-input" placeholder="Paste audio or video file path...">
-                            <button id="browse-btn" class="btn-secondary">Browse</button>
-                        </div>
-                        <button id="transcribe-btn" class="btn-primary" disabled>Transcribe</button>
-                        <div id="file-progress" class="file-progress hidden">
-                            <div class="progress-bar-inline">
-                                <div class="progress-fill-inline loading"></div>
-                            </div>
-                            <p id="file-progress-msg" class="file-progress-msg loading">Transcribing file...</p>
-                        </div>
-                        <div id="file-result" class="file-result hidden">
-                            <p id="file-result-text" class="file-result-text"></p>
-                            <p id="file-output-path" class="file-output-path"></p>
-                        </div>
+
+                        <aside id="file-sidebar" class="file-sidebar">
+                            <section class="file-sidebar-section">
+                                <h4>Options</h4>
+                                <label>Engine
+                                    <select id="opt-engine">
+                                        <option value="auto">Auto (preset)</option>
+                                        <option value="parakeet">Parakeet (fast)</option>
+                                        <option value="whisper-turbo">Whisper turbo</option>
+                                        <option value="whisper-large">Whisper large (best)</option>
+                                    </select>
+                                </label>
+                                <label>Quality preset
+                                    <select id="opt-quality">
+                                        <option value="fast">Fast</option>
+                                        <option value="balanced" selected>Balanced</option>
+                                        <option value="best">Best</option>
+                                    </select>
+                                </label>
+                                <label>Language
+                                    <select id="opt-language">
+                                        <option value="auto" selected>Auto-detect</option>
+                                        <option value="en">English</option>
+                                        <option value="es">Spanish</option>
+                                        <option value="fr">French</option>
+                                        <option value="de">German</option>
+                                        <option value="it">Italian</option>
+                                        <option value="pt">Portuguese</option>
+                                        <option value="hi">Hindi</option>
+                                        <option value="ja">Japanese</option>
+                                        <option value="zh">Chinese</option>
+                                    </select>
+                                </label>
+                                <label>Task
+                                    <select id="opt-task">
+                                        <option value="transcribe" selected>Transcribe</option>
+                                        <option value="translate">Translate to English</option>
+                                    </select>
+                                </label>
+                                <label class="opt-checkbox">
+                                    <input type="checkbox" id="opt-diarize" checked /> Identify speakers
+                                </label>
+                                <label>Speaker count
+                                    <select id="opt-speakers">
+                                        <option value="auto" selected>Auto</option>
+                                        <option value="1">1</option><option value="2">2</option>
+                                        <option value="3">3</option><option value="4">4</option>
+                                        <option value="5">5</option><option value="6">6</option>
+                                        <option value="7">7</option><option value="8">8</option>
+                                    </select>
+                                </label>
+                                <details class="advanced-options">
+                                    <summary>Advanced</summary>
+                                    <label>Initial prompt
+                                        <textarea id="opt-prompt" rows="2"></textarea>
+                                    </label>
+                                    <label>Timestamp granularity
+                                        <select id="opt-ts">
+                                            <option value="none">None</option>
+                                            <option value="sentence" selected>Sentence</option>
+                                            <option value="word">Word</option>
+                                        </select>
+                                    </label>
+                                    <label>Temperature
+                                        <input type="number" id="opt-temp" min="0" max="1" step="0.1" value="0" />
+                                    </label>
+                                    <label>Beam size
+                                        <input type="number" id="opt-beam" min="1" max="10" step="1" />
+                                    </label>
+                                </details>
+                                <button id="file-retranscribe" class="btn-primary hidden">Re-transcribe</button>
+                            </section>
+                            <section class="file-sidebar-section">
+                                <h4>Export</h4>
+                                <select id="export-format">
+                                    <option value="txt">Plain text (.txt)</option>
+                                    <option value="md">Markdown (.md)</option>
+                                    <option value="srt">Subtitles (.srt)</option>
+                                    <option value="vtt">WebVTT (.vtt)</option>
+                                    <option value="docx">Word document (.docx)</option>
+                                    <option value="json">JSON payload (.json)</option>
+                                </select>
+                                <button id="export-save" class="btn-secondary">Save as…</button>
+                            </section>
+                        </aside>
                     </div>
                 </div>
 
@@ -906,5 +1011,6 @@
     <script src="/static/classnote.js"></script>
     <script src="/static/meeting.js"></script>
     <script src="/static/app.js"></script>
+    <script src="file.js" defer></script>
 </body>
 </html>
