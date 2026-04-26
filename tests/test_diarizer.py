@@ -1,4 +1,5 @@
 # tests/test_diarizer.py
+import pytest
 from unittest.mock import MagicMock
 from diarizer import Diarizer, SpeakerSegment
 
@@ -16,6 +17,7 @@ def test_diarizer_initial_state():
     assert d.status == "idle"
 
 
+@pytest.mark.diarizer
 def test_diarize_returns_speaker_segments():
     """diarize() returns a list of SpeakerSegment with 1+ entries on speech audio."""
     d = Diarizer()
@@ -36,6 +38,7 @@ def test_diarize_returns_speaker_segments():
     assert result[0].end == 1.5
 
 
+@pytest.mark.diarizer
 def test_diarize_with_speaker_count_hint():
     """When num_speakers is given, it's passed through to the session config."""
     d = Diarizer()
@@ -47,6 +50,7 @@ def test_diarize_with_speaker_count_hint():
     assert fake_session.config.clustering.num_clusters == 3
 
 
+@pytest.mark.diarizer
 def test_diarize_returns_empty_for_silence():
     d = Diarizer()
     fake_session = MagicMock()
@@ -54,3 +58,15 @@ def test_diarize_returns_empty_for_silence():
     d._session = fake_session
     d.is_loaded = True
     assert d.diarize("/tmp/test.wav") == []
+
+
+@pytest.mark.diarizer
+def test_diarize_default_auto_resets_num_clusters_to_minus_one():
+    """Default num_speakers='auto' sets num_clusters=-1 (threshold-based clustering)."""
+    d = Diarizer()
+    fake_session = MagicMock()
+    fake_session.process.return_value.sort_by_start_time.return_value = []
+    d._session = fake_session
+    d.is_loaded = True
+    d.diarize("/tmp/test.wav")  # default num_speakers="auto"
+    assert fake_session.config.clustering.num_clusters == -1

@@ -1,19 +1,23 @@
 # tests/conftest.py
-"""Shared pytest fixtures and patches for the DashScribe test suite."""
+"""Shared pytest fixtures for the DashScribe test suite."""
 import numpy as np
 import pytest
 from unittest.mock import patch
 
 
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "diarizer: patch diarizer.sf so the test can call diarize() without real audio on disk",
+    )
+
+
 @pytest.fixture(autouse=True)
 def _patch_soundfile_for_diarizer(request):
-    """Patch soundfile.read inside diarizer so tests that pre-set _session
-    don't need a real audio file on disk."""
-    # Only apply when the diarizer module is actually imported by the test.
-    if "diarizer" not in request.node.nodeid:
+    """Patch soundfile.read inside diarizer for tests marked @pytest.mark.diarizer."""
+    if not request.node.get_closest_marker("diarizer"):
         yield
         return
-
     dummy_audio = np.zeros(16000, dtype=np.float32)
     dummy_sr = 16000
     with patch("diarizer.sf") as mock_sf:

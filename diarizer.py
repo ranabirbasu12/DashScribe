@@ -56,39 +56,46 @@ class Diarizer:
         seg_path, emb_path = self._model_paths()
         if not seg_path.exists():
             tarball = CACHE_DIR / "segmentation.tar.bz2"
-            urllib.request.urlretrieve(SEGMENTATION_URL, tarball)
-            with tarfile.open(tarball, "r:bz2") as tf:
-                tf.extractall(CACHE_DIR)
-            tarball.unlink(missing_ok=True)
+            try:
+                urllib.request.urlretrieve(SEGMENTATION_URL, tarball)
+                with tarfile.open(tarball, "r:bz2") as tf:
+                    tf.extractall(CACHE_DIR, filter="data")
+            finally:
+                tarball.unlink(missing_ok=True)
         if not emb_path.exists():
             urllib.request.urlretrieve(EMBEDDING_URL, emb_path)
 
     def _ensure_loaded(self) -> None:
         if self._session is not None:
             return
-        if not self.is_cached():
-            self.status = "downloading"
-            self.status_message = "Downloading diarization models (~35 MB)..."
-            self._download_models()
-        self.status = "loading"
-        self.status_message = "Loading diarization models..."
-        import sherpa_onnx
-        seg_path, emb_path = self._model_paths()
-        config = sherpa_onnx.OfflineSpeakerDiarizationConfig(
-            segmentation=sherpa_onnx.OfflineSpeakerSegmentationModelConfig(
-                pyannote=sherpa_onnx.OfflineSpeakerSegmentationPyannoteModelConfig(
-                    model=str(seg_path),
+        try:
+            if not self.is_cached():
+                self.status = "downloading"
+                self.status_message = "Downloading diarization models (~35 MB)..."
+                self._download_models()
+            self.status = "loading"
+            self.status_message = "Loading diarization models..."
+            import sherpa_onnx
+            seg_path, emb_path = self._model_paths()
+            config = sherpa_onnx.OfflineSpeakerDiarizationConfig(
+                segmentation=sherpa_onnx.OfflineSpeakerSegmentationModelConfig(
+                    pyannote=sherpa_onnx.OfflineSpeakerSegmentationPyannoteModelConfig(
+                        model=str(seg_path),
+                    ),
                 ),
-            ),
-            embedding=sherpa_onnx.SpeakerEmbeddingExtractorConfig(model=str(emb_path)),
-            clustering=sherpa_onnx.FastClusteringConfig(num_clusters=-1, threshold=0.5),
-            min_duration_on=0.3,
-            min_duration_off=0.5,
-        )
-        self._session = sherpa_onnx.OfflineSpeakerDiarization(config)
-        self.is_loaded = True
-        self.status = "ready"
-        self.status_message = "Ready"
+                embedding=sherpa_onnx.SpeakerEmbeddingExtractorConfig(model=str(emb_path)),
+                clustering=sherpa_onnx.FastClusteringConfig(num_clusters=-1, threshold=0.5),
+                min_duration_on=0.3,
+                min_duration_off=0.5,
+            )
+            self._session = sherpa_onnx.OfflineSpeakerDiarization(config)
+            self.is_loaded = True
+            self.status = "ready"
+            self.status_message = "Ready"
+        except Exception as e:
+            self.status = "error"
+            self.status_message = f"Diarizer load failed: {e}"
+            raise
 
     def diarize(
         self,
@@ -106,13 +113,12 @@ class Diarizer:
             audio, sr = sf.read(audio_path, dtype="float32", always_2d=False)
             if audio.ndim == 2:
                 audio = audio.mean(axis=1)
+            # MagicMock returns a Mock for sample_rate during tests; skip resampling then.
             target_sr = self._session.sample_rate
             if isinstance(target_sr, int) and sr != target_sr:
-                ratio = target_sr / sr
-                new_len = int(len(audio) * ratio)
-                idx = (np.arange(new_len) / ratio).astype(np.int64)
-                idx = np.clip(idx, 0, len(audio) - 1)
-                audio = audio[idx]
+                from scipy.signal import resample as _resample
+                new_len = int(len(audio) * target_sr / sr)
+                audio = _resample(audio, new_len).astype(np.float32)
             raw_result = self._session.process(audio).sort_by_start_time()
             return [
                 SpeakerSegment(
