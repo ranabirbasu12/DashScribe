@@ -17,3 +17,4 @@ httpx
 mlx-lm
 sherpa-onnx>=1.10.30
 soundfile
+python-docx>=1.1.2
