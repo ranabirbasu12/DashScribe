@@ -477,6 +477,38 @@ def main():
     # Store reference so /api/browse-file can open a file dialog
     app.state.main_window = main_window
 
+    # Bridge pywebview's native file-drop into the file-mode JS handler.
+    # WebKit doesn't expose file.path to JS for security reasons; pywebview
+    # injects the absolute path as `pywebviewFullPath` on the file event,
+    # but ONLY when a Python `on('drop', ...)` handler is registered on the
+    # element (this enables the native dragging-pasteboard intercept).
+    def _on_file_dropped(event):
+        files = (event.get("dataTransfer") or {}).get("files") or []
+        if not files:
+            return
+        path = files[0].get("pywebviewFullPath") or files[0].get("name") or ""
+        if not path:
+            return
+        safe = path.replace("\\", "\\\\").replace("'", "\\'")
+        try:
+            main_window.evaluate_js(
+                "if (window.__fileMode && window.__fileMode.selectPath) "
+                "window.__fileMode.selectPath('" + safe + "');"
+            )
+        except Exception:
+            pass
+
+    def _wire_drop_target():
+        try:
+            element = main_window.dom.get_element('#file-dropzone')
+            if element is not None:
+                element.on('drop', _on_file_dropped)
+        except Exception:
+            # Element may not exist on first page load; ignore — Browse still works.
+            pass
+
+    main_window.events.loaded += lambda *a, **kw: _wire_drop_target()
+
     bar_anim_lock = threading.Lock()
     bar_anim_token = 0
     bar_size = {"w": BAR_IDLE_W, "h": BAR_IDLE_H}

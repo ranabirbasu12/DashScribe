@@ -72,13 +72,33 @@
         }).catch(() => {});
     }
 
+    let selectedPath = null;
+
+    function basename(path) {
+        const parts = String(path || "").split(/[\\/]/);
+        return parts[parts.length - 1] || path;
+    }
+
+    function selectPath(path) {
+        selectedPath = path;
+        const goBtn = el("file-go-btn");
+        const display = path === "__sample__" ? "sample-en.m4a" : basename(path);
+        goBtn.textContent = "Transcribe " + display;
+        goBtn.classList.remove("hidden");
+        const sel = el("file-selected");
+        if (sel) {
+            sel.textContent = path;
+            sel.classList.remove("hidden");
+        }
+    }
+
     function startJobFromPath(path) {
         if (!ws || ws.readyState !== WebSocket.OPEN) return;
         setState("working");
         ws.send(JSON.stringify({ action: "start_file_job", path, options: getOptions() }));
     }
 
-    async function startJobFromUrl(url) {
+    async function selectFromUrl(url) {
         const r = await fetch("/api/file-job/from-url", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -89,41 +109,39 @@
             return;
         }
         const { path } = await r.json();
-        startJobFromPath(path);
+        selectPath(path);
     }
 
     function bindEmptyState() {
         const dz = dropzone();
+        // Visual feedback only — actual file drops are delivered by pywebview's
+        // native files_dropped event (see main.py), because WebKit does not expose
+        // file.path to JavaScript for security reasons.
         ["dragenter", "dragover"].forEach(evt => {
             dz.addEventListener(evt, (e) => { e.preventDefault(); dz.classList.add("drag-over"); });
         });
         ["dragleave", "drop"].forEach(evt => {
             dz.addEventListener(evt, (e) => { e.preventDefault(); dz.classList.remove("drag-over"); });
         });
-        dz.addEventListener("drop", (e) => {
-            const file = e.dataTransfer.files[0];
-            if (!file) return;
-            if (file.path) {
-                startJobFromPath(file.path);
-            } else {
-                window.alert("Please use the Browse button — drop only works in the desktop app.");
-            }
-        });
 
         el("file-browse-btn").addEventListener("click", async () => {
             const r = await fetch("/api/browse-file");
             const data = await r.json();
-            if (data.path) startJobFromPath(data.path);
+            if (data.path) selectPath(data.path);
         });
 
         el("file-url").addEventListener("keydown", (e) => {
             if (e.key === "Enter" && e.target.value.trim()) {
-                startJobFromUrl(e.target.value.trim());
+                selectFromUrl(e.target.value.trim());
             }
         });
 
         el("file-sample-btn").addEventListener("click", () => {
-            startJobFromPath("__sample__");
+            selectPath("__sample__");
+        });
+
+        el("file-go-btn").addEventListener("click", () => {
+            if (selectedPath) startJobFromPath(selectedPath);
         });
     }
 
@@ -393,7 +411,7 @@
     document.addEventListener("DOMContentLoaded", init);
 
     window.__fileMode = {
-        startJobFromPath, setState, setWs,
+        startJobFromPath, selectPath, setState, setWs,
         setJob: (j) => { currentJob = j; },
         showResult, showWorking, updateProgress,
     };
